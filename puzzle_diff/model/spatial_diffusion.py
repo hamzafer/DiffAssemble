@@ -959,7 +959,13 @@ class GNN_Diffusion(pl.LightningModule):
                         t_res = t_img[idx]
 
                         pred_pos = t_res[:, :2]
-                        pred_rot = t_res[:, 2:]
+                        
+                        # FIX: Only extract rotation for rotation-enabled models
+                        if self.rotation and t_res.size(1) > 2:
+                            pred_rot = t_res[:, 2:]
+                        else:
+                            pred_rot = None
+                            
                         fig, ax = plt.subplots(2, 1, figsize=(10, 15))
 
                         img_plot = self.create_image_from_patches(
@@ -980,26 +986,29 @@ class GNN_Diffusion(pl.LightningModule):
                         # ax[0].patch.set_linewidth("1")
 
                         col = list(map(interpolate_color, gt_pos))
-                        pred_rot = F.normalize(pred_rot, dim=-1)
-
-                        rad_pred = torch.atan2(pred_rot[:, 1], pred_rot[:, 0])
-                        rad_gt = torch.atan2(gt_rot[:, 1], gt_rot[:, 0])
-
-                        diff_rad = (rad_gt - rad_pred) + math.pi / 2
-                        new_p = torch.stack(
-                            [torch.cos(diff_rad), torch.sin(diff_rad)], dim=-1
-                        )
-
-                        ax[1].quiver(
-                            pred_pos[:, 0].cpu(),
-                            pred_pos[:, 1].cpu(),
-                            new_p[:, 0].cpu(),
-                            new_p[:, 1].cpu(),
-                            color=col,
-                            pivot="middle",
-                            scale=10,
-                            width=0.01,
-                        )
+                        
+                        # FIX: Only process rotation visualization if we have rotation data
+                        if pred_rot is not None and self.rotation:
+                            pred_rot = F.normalize(pred_rot, dim=-1)
+                            rad_pred = torch.atan2(pred_rot[:, 1], pred_rot[:, 0])
+                            rad_gt = torch.atan2(gt_rot[:, 1], gt_rot[:, 0])
+                            diff_rad = (rad_gt - rad_pred) + math.pi / 2
+                            new_p = torch.stack(
+                                [torch.cos(diff_rad), torch.sin(diff_rad)], dim=-1
+                            )
+                            ax[1].quiver(
+                                pred_pos[:, 0].cpu(),
+                                pred_pos[:, 1].cpu(),
+                                new_p[:, 0].cpu(),
+                                new_p[:, 1].cpu(),
+                                color=col,
+                                pivot="middle",
+                                scale=10,
+                                width=0.01,
+                            )
+                        else:
+                            # For 2D models, just show position scatter plot
+                            ax[1].scatter(pred_pos[:, 0].cpu(), pred_pos[:, 1].cpu(), c=col)
 
                         ax[1].set_aspect("equal")
                         # ax[1].set_axis_off()
@@ -1025,21 +1034,21 @@ class GNN_Diffusion(pl.LightningModule):
                         plt.close(fig)
 
                     ###### FINAL IMAGE ######
-
-                    # pred_pos = t_res[:, :2]
-                    pred_rot = t_res[:, 2:]
+                    
+                    # FIX: Only extract rotation for rotation-enabled models
+                    if self.rotation and t_res.size(1) > 2:
+                        pred_rot = t_res[:, 2:]
+                        # snap the rotation to one of the four 90 degree rotations
+                        rad = torch.atan2(pred_rot[:, 1], pred_rot[:, 0])
+                        rad_snap = torch.round(rad / (torch.pi / 2)) * torch.pi / 2
+                        pred_rot = torch.stack(
+                            [torch.cos(rad_snap), torch.sin(rad_snap)], dim=-1
+                        )
+                    else:
+                        pred_rot = None
 
                     # for the final image use the gt pos, sorted by the predicted assignement
-                    # pred_pos = gt_pos[pred_ass[:, 1]]
                     pred_pos = real_grid[pred_ass[:, 1]]
-
-                    # snap the rotation to one of the four 90 degree rotations
-                    rad = torch.atan2(pred_rot[:, 1], pred_rot[:, 0])
-                    rad_snap = torch.round(rad / (torch.pi / 2)) * torch.pi / 2
-
-                    pred_rot = torch.stack(
-                        [torch.cos(rad_snap), torch.sin(rad_snap)], dim=-1
-                    )
 
                     fig, ax = plt.subplots(2, 1, figsize=(10, 15))
 
@@ -1061,26 +1070,29 @@ class GNN_Diffusion(pl.LightningModule):
                     # ax[0].patch.set_linewidth("1")
 
                     col = list(map(interpolate_color, gt_pos))
-                    pred_rot = F.normalize(pred_rot, dim=-1)
-
-                    rad_pred = torch.atan2(pred_rot[:, 1], pred_rot[:, 0])
-                    rad_gt = torch.atan2(gt_rot[:, 1], gt_rot[:, 0])
-
-                    diff_rad = (rad_gt - rad_pred) + math.pi / 2
-                    new_p = torch.stack(
-                        [torch.cos(diff_rad), torch.sin(diff_rad)], dim=-1
-                    )
-
-                    ax[1].quiver(
-                        pred_pos[:, 0].cpu(),
-                        pred_pos[:, 1].cpu(),
-                        new_p[:, 0].cpu(),
-                        new_p[:, 1].cpu(),
-                        color=col,
-                        pivot="middle",
-                        scale=10,
-                        width=0.01,
-                    )
+                    
+                    # FIX: Only process rotation visualization if we have rotation data
+                    if pred_rot is not None and self.rotation:
+                        pred_rot = F.normalize(pred_rot, dim=-1)
+                        rad_pred = torch.atan2(pred_rot[:, 1], pred_rot[:, 0])
+                        rad_gt = torch.atan2(gt_rot[:, 1], gt_rot[:, 0])
+                        diff_rad = (rad_gt - rad_pred) + math.pi / 2
+                        new_p = torch.stack(
+                            [torch.cos(diff_rad), torch.sin(diff_rad)], dim=-1
+                        )
+                        ax[1].quiver(
+                            pred_pos[:, 0].cpu(),
+                            pred_pos[:, 1].cpu(),
+                            new_p[:, 0].cpu(),
+                            new_p[:, 1].cpu(),
+                            color=col,
+                            pivot="middle",
+                            scale=10,
+                            width=0.01,
+                        )
+                    else:
+                        # For 2D models, just show position scatter plot
+                        ax[1].scatter(pred_pos[:, 0].cpu(), pred_pos[:, 1].cpu(), c=col)
 
                     ax[1].set_aspect("equal")
                     # ax[1].set_axis_off()
