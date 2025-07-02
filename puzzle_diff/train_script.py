@@ -201,7 +201,7 @@ def main(
         offline=offline,
         name=experiment_name,
         # entity="puzzle_diff",
-        entity="puzzle_diff_academic",
+        entity="hamzafer3-ntnu",
         tags=tags,
         id=wandb_id if wandb_id else None,
         resume="must" if wandb_id else None,

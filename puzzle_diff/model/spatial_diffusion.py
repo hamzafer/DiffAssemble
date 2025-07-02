@@ -944,6 +944,18 @@ class GNN_Diffusion(pl.LightningModule):
                 correct = (gt_ass[:, 1] == pred_ass[:, 1]).all()
 
                 piece_accuracy = (gt_ass[:, 1] == pred_ass[:, 1]).to(self.device)
+                
+                # ADD THIS FAILURE DETECTION CODE HERE
+                piece_acc_score = piece_accuracy.float().mean().item()
+                image_id = batch.ind_name[i].item()
+                
+                if not correct or piece_acc_score < 0.8:
+                    print(f"FAILED: Image {image_id:05d}, Pieces: {len(gt_ass)}, Correct: {piece_accuracy.sum().item()}/{len(gt_ass)} ({piece_acc_score:.3f})")
+                    
+                    # Optional: Save to log file
+                    with open("failed_puzzles.log", "a") as f:
+                        f.write(f"{image_id},{piece_acc_score:.3f},{correct}\n")
+                
                 if self.rotation:
                     pred_rot = img[idx, 2:]
                     gt_rot = batch.x[idx, 2:]
