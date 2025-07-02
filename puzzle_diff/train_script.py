@@ -16,7 +16,7 @@ import pytorch_lightning as pl
 from dataset.dataset_utils import get_dataset, get_dataset_ROT
 
 # from model import spatial_diffusion as sd
-from model import spatial_diffusion_on_angle as sd_angle
+# from model import spatial_diffusion_on_angle as sd_angle
 
 import matplotlib
 import pytorch_lightning as pl
