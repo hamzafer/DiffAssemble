@@ -22,22 +22,24 @@ sys.modules['model.spatial_diffusion_discrete_rot'] = spatial_diffusion_discrete
 from puzzle_diff.model import spatial_diffusion as sd
 from puzzle_diff.dataset import dataset_utils as du
 
-# Load dataset first
+# Load dataset first - UPDATED TO MATCH YOUR CONFIG
 train_dt, test_dt, puzzle_sizes = du.get_dataset_ROT(
     dataset="celeba",
-    puzzle_sizes=[4]
+    puzzle_sizes=[12]  # Changed from 4 to 12
 )
 
-# Load model
-checkpoint_path = "/home/user1/Desktop/HAMZA/THESIS/DiffAssemble/Puzzle-Diff/cv0u39xy/checkpoints/last.ckpt"
+# Load model - UPDATED CHECKPOINT PATH
+checkpoint_path = "/home/user1/Desktop/HAMZA/THESIS/DiffAssemble/Puzzle-Diff/99qcofwy/checkpoints/last.ckpt"
 model = sd.GNN_Diffusion.load_from_checkpoint(checkpoint_path)
 model.initialize_torchmetrics(puzzle_sizes)
 model.noise_weight = 0.0
-model.inference_ratio = 10
+model.inference_ratio = 10  # Matches your config
 model.save_eval_images = True
 
 print("Model loaded successfully!")
 print(f"Rotation: {getattr(model, 'rotation', 'Unknown')}")
+print(f"Architecture: {getattr(model, 'architecture', 'Unknown')}")
+print(f"Backbone: {getattr(model, 'backbone', 'Unknown')}")
 
 # ==================== FULL ROTATION ANALYSIS CODE ====================
 
@@ -75,7 +77,7 @@ def interpolate_color(pos, col_1=(1, 0, 0), col_2=(1, 1, 0), col_3=(0, 0, 1), co
     c2 = interpolate_color1d(col_3, col_4, f1)
     return interpolate_color1d(c1, c2, f2)
 
-def create_image_from_patches(patches, pos, n_patches=(4, 4), rotations=None):
+def create_image_from_patches(patches, pos, n_patches=(12, 12), rotations=None):  # Updated to 12x12
     """Create puzzle image from patches and positions"""
     patch_size = 32
     height = patch_size * n_patches[0]
@@ -123,58 +125,63 @@ def greedy_cost_assignment(pred_pos, real_grid):
 
 # Load failed puzzles data
 print("\n📊 Loading failed puzzles data...")
-failed_data = pd.read_csv('failed_puzzles.log', names=['image_id', 'piece_accuracy', 'perfect_puzzle'])
-print(f"Found {len(failed_data)} failed puzzles")
+try:
+    failed_data = pd.read_csv('failed_puzzles.log', names=['image_id', 'piece_accuracy', 'perfect_puzzle'])
+    print(f"Found {len(failed_data)} failed puzzles")
+except FileNotFoundError:
+    print("No failed_puzzles.log found, selecting random samples")
+    failed_data = pd.DataFrame()
 
-# Select interesting examples
+# Select interesting examples - ADAPTED FOR 12x12 PUZZLES
 print("\n🔍 Selecting examples for analysis...")
 example_ids = []
 
-# Worst failures (lowest piece accuracy)
-worst_failures = failed_data.nsmallest(3, 'piece_accuracy')  # Increased from 2 to 3
-example_ids.extend(worst_failures['image_id'].tolist())
-print(f"Worst failures: {worst_failures['image_id'].tolist()} (accuracy: {worst_failures['piece_accuracy'].tolist()})")
+if len(failed_data) > 0:
+    # Worst failures (lowest piece accuracy)
+    worst_failures = failed_data.nsmallest(3, 'piece_accuracy')
+    example_ids.extend(worst_failures['image_id'].tolist())
+    print(f"Worst failures: {worst_failures['image_id'].tolist()} (accuracy: {worst_failures['piece_accuracy'].tolist()})")
 
-# Near misses (high piece accuracy but still failed)
-near_misses = failed_data[failed_data['piece_accuracy'] >= 0.9]
-if len(near_misses) > 0:
-    example_ids.extend(near_misses['image_id'].head(4).tolist())  # Increased from 2 to 4
-    print(f"Near misses: {near_misses['image_id'].head(4).tolist()} (accuracy: {near_misses['piece_accuracy'].head(4).tolist()})")
+    # Near misses (high piece accuracy but still failed)
+    near_misses = failed_data[failed_data['piece_accuracy'] >= 0.9]
+    if len(near_misses) > 0:
+        example_ids.extend(near_misses['image_id'].head(4).tolist())
+        print(f"Near misses: {near_misses['image_id'].head(4).tolist()} (accuracy: {near_misses['piece_accuracy'].head(4).tolist()})")
 
-# Medium failures (around 0.5-0.7 accuracy)
-medium_failures = failed_data[(failed_data['piece_accuracy'] >= 0.5) & (failed_data['piece_accuracy'] < 0.7)]
-if len(medium_failures) > 0:
-    example_ids.extend(medium_failures['image_id'].head(3).tolist())
-    print(f"Medium failures: {medium_failures['image_id'].head(3).tolist()} (accuracy: {medium_failures['piece_accuracy'].head(3).tolist()})")
+    # Medium failures (around 0.5-0.7 accuracy)
+    medium_failures = failed_data[(failed_data['piece_accuracy'] >= 0.5) & (failed_data['piece_accuracy'] < 0.7)]
+    if len(medium_failures) > 0:
+        example_ids.extend(medium_failures['image_id'].head(3).tolist())
+        print(f"Medium failures: {medium_failures['image_id'].head(3).tolist()} (accuracy: {medium_failures['piece_accuracy'].head(3).tolist()})")
 
-# Add some potentially successful cases
-all_ids = set(range(min(len(test_dt), 2000)))  # Increased search range
-failed_ids = set(failed_data['image_id'].values)
-successful_ids = list(all_ids - failed_ids)
-if successful_ids:
-    success_samples = np.random.choice(successful_ids, size=min(4, len(successful_ids)), replace=False)  # Increased from 2 to 4
-    example_ids.extend(success_samples.tolist())
-    print(f"Success samples: {success_samples.tolist()}")
+    # Add some potentially successful cases
+    all_ids = set(range(min(len(test_dt), 2000)))
+    failed_ids = set(failed_data['image_id'].values)
+    successful_ids = list(all_ids - failed_ids)
+    if successful_ids:
+        success_samples = np.random.choice(successful_ids, size=min(4, len(successful_ids)), replace=False)
+        example_ids.extend(success_samples.tolist())
+        print(f"Success samples: {success_samples.tolist()}")
 
 # Add some random samples for diversity
-random_samples = np.random.choice(range(min(len(test_dt), 1000)), size=3, replace=False)
+random_samples = np.random.choice(range(min(len(test_dt), 1000)), size=6, replace=False)  # Increased for 12x12
 example_ids.extend(random_samples.tolist())
 print(f"Random samples: {random_samples.tolist()}")
 
-example_ids = example_ids[:15]  # Increased from 6 to 15 examples
+example_ids = example_ids[:10]  # Reduced to 10 for 12x12 (more complex)
 print(f"\nAnalyzing {len(example_ids)} examples: {example_ids}")
 
 # Create output directory
-output_dir = Path("rotation_analysis_results")
+output_dir = Path("hamza_12x12")  # Updated directory name
 output_dir.mkdir(exist_ok=True)
 
-# Create grid for position assignment
-y = torch.linspace(-1, 1, 4)
-x = torch.linspace(-1, 1, 4)
+# Create grid for position assignment - UPDATED FOR 12x12
+y = torch.linspace(-1, 1, 12)  # Changed from 4 to 12
+x = torch.linspace(-1, 1, 12)  # Changed from 4 to 12
 xy = torch.stack(torch.meshgrid(x, y, indexing="xy"), -1)
 real_grid = einops.rearrange(xy, "x y c-> (x y) c")
 
-print(f"\n🎯 Starting rotation analysis...")
+print(f"\n🎯 Starting rotation analysis for 12x12 puzzles...")
 print("="*80)
 
 results = []
@@ -264,17 +271,26 @@ with torch.no_grad():
         
         piece_acc_score = piece_accuracy.mean().item()
         pieces_correct = piece_accuracy.sum().int().item()
+        total_pieces = sample.x.shape[0]  # Should be 144 for 12x12
         
-        print(f"   📊 Results: {pieces_correct}/16 pieces correct ({piece_acc_score:.3f})")
+        print(f"   📊 Results: {pieces_correct}/{total_pieces} pieces correct ({piece_acc_score:.3f})")
         print(f"   🎯 Perfect puzzle: {total_correct.item()}")
         
-        # Create visualizations - now with 3 images: Initial, Prediction, Ground Truth
-        fig, axes = plt.subplots(2, 3, figsize=(20, 12))  # Changed to 2x3 layout
+        # Create visualizations - adapted for larger puzzle
+        fig, axes = plt.subplots(2, 3, figsize=(24, 16))  # Larger figure for 12x12
         
-        # 1. Initial scrambled image (using predicted positions but with identity rotations)
-        initial_img = create_image_from_patches(patches_rgb, pred_pos, (4, 4), None)  # No rotation for initial
+        # 1. TRUE SCRAMBLED IMAGE (random positions + random rotations)
+        scrambled_pos = torch.rand(patches_rgb.shape[0], 2) * 2 - 1  # Random positions in [-1,1]
+        if gt_rot is not None:
+            # Random 90-degree rotations
+            random_angles = torch.randint(0, 4, (patches_rgb.shape[0],)) * torch.pi / 2
+            scrambled_rot = torch.stack([torch.cos(random_angles), torch.sin(random_angles)], dim=-1)
+            initial_img = create_image_from_patches(patches_rgb, scrambled_pos, (12, 12), scrambled_rot)
+        else:
+            initial_img = create_image_from_patches(patches_rgb, scrambled_pos, (12, 12), None)
+            
         axes[0, 0].imshow(initial_img)
-        axes[0, 0].set_title(f'Initial Scrambled\nImage {img_id}', fontsize=12, fontweight='bold')
+        axes[0, 0].set_title(f'TRUE Scrambled\nImage {img_id} (12x12)', fontsize=12, fontweight='bold')
         axes[0, 0].axis('off')
         
         # 2. Model Prediction (with predicted rotations)
@@ -283,12 +299,12 @@ with torch.no_grad():
             rad = torch.atan2(pred_rot[:, 1], pred_rot[:, 0])
             rad_snap = torch.round(rad / (torch.pi / 2)) * torch.pi / 2
             pred_rot_snapped = torch.stack([torch.cos(rad_snap), torch.sin(rad_snap)], dim=-1)
-            pred_img = create_image_from_patches(patches_rgb, pred_pos, (4, 4), pred_rot_snapped)
+            pred_img = create_image_from_patches(patches_rgb, pred_pos, (12, 12), pred_rot_snapped)
         else:
-            pred_img = create_image_from_patches(patches_rgb, pred_pos, (4, 4))
+            pred_img = create_image_from_patches(patches_rgb, pred_pos, (12, 12))
             
         axes[0, 1].imshow(pred_img)
-        status = "✅ PERFECT" if total_correct else f"⚠️ {pieces_correct}/16"
+        status = "✅ PERFECT" if total_correct else f"⚠️ {pieces_correct}/{total_pieces}"
         title_color = 'green' if total_correct else 'red'
         axes[0, 1].set_title(f'Model Prediction\n{status} ({piece_acc_score:.3f})', 
                            fontsize=12, fontweight='bold', color=title_color)
@@ -296,17 +312,17 @@ with torch.no_grad():
         
         # 3. Ground Truth (target solution)
         if gt_rot is not None:
-            gt_img = create_image_from_patches(patches_rgb, gt_pos, (4, 4), gt_rot)
+            gt_img = create_image_from_patches(patches_rgb, gt_pos, (12, 12), gt_rot)
         else:
-            gt_img = create_image_from_patches(patches_rgb, gt_pos, (4, 4))
+            gt_img = create_image_from_patches(patches_rgb, gt_pos, (12, 12))
         axes[0, 2].imshow(gt_img)
         axes[0, 2].set_title(f'Ground Truth\n(Target Solution)', fontsize=12, fontweight='bold')
         axes[0, 2].axis('off')
         
         # 4. Position scatter plot
         col = [interpolate_color(pos) for pos in gt_pos]
-        axes[1, 0].scatter(pred_pos[:, 0], pred_pos[:, 1], c=col, s=100, alpha=0.8)
-        axes[1, 0].scatter(gt_pos[:, 0], gt_pos[:, 1], c=col, s=100, marker='x', linewidths=3)
+        axes[1, 0].scatter(pred_pos[:, 0], pred_pos[:, 1], c=col, s=50, alpha=0.8)  # Smaller dots for 12x12
+        axes[1, 0].scatter(gt_pos[:, 0], gt_pos[:, 1], c=col, s=50, marker='x', linewidths=2)
         axes[1, 0].set_xlim(-1.2, 1.2)
         axes[1, 0].set_ylim(-1.2, 1.2)
         axes[1, 0].set_aspect('equal')
@@ -314,23 +330,24 @@ with torch.no_grad():
         axes[1, 0].set_title('Positions: Predicted (●) vs GT (×)', fontsize=12)
         axes[1, 0].grid(True, alpha=0.3)
         
-        # 5. Rotation visualization
+        # 5. Rotation visualization (sample subset for visibility)
         if pred_rot is not None and gt_rot is not None:
-            pred_rot_norm = F.normalize(pred_rot, dim=-1)
-            gt_rot_norm = F.normalize(gt_rot, dim=-1)
+            # Sample every 12th piece for visibility in 12x12
+            sample_idx = torch.arange(0, len(pred_rot), 12)
+            pred_rot_norm = F.normalize(pred_rot[sample_idx], dim=-1)
+            gt_rot_norm = F.normalize(gt_rot[sample_idx], dim=-1)
             
-            # Show rotation difference as arrows
-            axes[1, 1].quiver(pred_pos[:, 0], pred_pos[:, 1], 
+            axes[1, 1].quiver(pred_pos[sample_idx, 0], pred_pos[sample_idx, 1], 
                             pred_rot_norm[:, 0], pred_rot_norm[:, 1],
-                            color='red', scale=10, width=0.005, alpha=0.7, label='Predicted')
-            axes[1, 1].quiver(pred_pos[:, 0], pred_pos[:, 1], 
+                            color='red', scale=10, width=0.003, alpha=0.7, label='Predicted')
+            axes[1, 1].quiver(pred_pos[sample_idx, 0], pred_pos[sample_idx, 1], 
                             gt_rot_norm[:, 0], gt_rot_norm[:, 1],
-                            color='blue', scale=10, width=0.005, alpha=0.7, label='Ground Truth')
+                            color='blue', scale=10, width=0.003, alpha=0.7, label='Ground Truth')
             axes[1, 1].set_xlim(-1.2, 1.2)
             axes[1, 1].set_ylim(-1.2, 1.2)
             axes[1, 1].set_aspect('equal')
             axes[1, 1].invert_yaxis()
-            axes[1, 1].set_title('Rotations: Pred (Red) vs GT (Blue)', fontsize=12)
+            axes[1, 1].set_title('Rotations (Sampled): Pred (Red) vs GT (Blue)', fontsize=12)
             axes[1, 1].legend()
             axes[1, 1].grid(True, alpha=0.3)
         else:
@@ -338,25 +355,53 @@ with torch.no_grad():
                           transform=axes[1, 1].transAxes, fontsize=16)
             axes[1, 1].axis('off')
         
-        # 6. Per-piece accuracy breakdown
-        piece_colors = ['green' if correct else 'red' for correct in piece_accuracy]
-        piece_numbers = list(range(16))
-        axes[1, 2].bar(piece_numbers, piece_accuracy, color=piece_colors, alpha=0.7)
-        axes[1, 2].set_xlabel('Piece Number')
-        axes[1, 2].set_ylabel('Correct (1.0) / Wrong (0.0)')
-        axes[1, 2].set_title(f'Per-Piece Accuracy\n{pieces_correct}/16 Correct', fontsize=12)
-        axes[1, 2].set_ylim(0, 1.1)
+        # 6. Per-piece accuracy breakdown (show histogram for 12x12)
+        correct_count = piece_accuracy.sum().item()
+        wrong_count = len(piece_accuracy) - correct_count
+        
+        axes[1, 2].bar(['Correct', 'Wrong'], [correct_count, wrong_count], 
+                      color=['green', 'red'], alpha=0.7)
+        axes[1, 2].set_ylabel('Number of Pieces')
+        axes[1, 2].set_title(f'Accuracy Summary\n{pieces_correct}/{total_pieces} Correct', fontsize=12)
         axes[1, 2].grid(True, alpha=0.3)
         
-        plt.suptitle(f'Complete Rotation Analysis - Image {img_id}\n'
-                    f'Initial → Prediction → Ground Truth | Piece Accuracy: {piece_acc_score:.3f} | Perfect: {total_correct.item()}', 
+        plt.suptitle(f'12x12 Rotation Analysis - Image {img_id}\n'
+                    f'Piece Accuracy: {piece_acc_score:.3f} | Perfect: {total_correct.item()}', 
                     fontsize=16, fontweight='bold')
         plt.tight_layout()
         
         # Save figure
-        save_path = output_dir / f"analysis_image_{img_id}.png"
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        save_path = output_dir / f"analysis_12x12_image_{img_id}.png"
+        plt.savefig(save_path, dpi=200, bbox_inches='tight')  # Lower DPI for large images
         plt.close()
+        
+        # 🆕 SIMPLE 3-IMAGE VERSION FOR HAMZA
+        fig_simple, axes_simple = plt.subplots(1, 3, figsize=(18, 6))
+        
+        # Just the 3 images - no extra data
+        axes_simple[0].imshow(initial_img)
+        axes_simple[0].set_title(f'Scrambled\nImage {img_id}', fontsize=14, fontweight='bold')
+        axes_simple[0].axis('off')
+        
+        axes_simple[1].imshow(pred_img)
+        status = "✅ PERFECT" if total_correct else f"⚠️ {pieces_correct}/{total_pieces}"
+        title_color = 'green' if total_correct else 'red'
+        axes_simple[1].set_title(f'Model Prediction\n{status}', 
+                               fontsize=14, fontweight='bold', color=title_color)
+        axes_simple[1].axis('off')
+        
+        axes_simple[2].imshow(gt_img)
+        axes_simple[2].set_title(f'Ground Truth\n(Target)', fontsize=14, fontweight='bold')
+        axes_simple[2].axis('off')
+        
+        plt.tight_layout()
+        
+        # Save simple version
+        simple_save_path = output_dir / f"simple_12x12_image_{img_id}.png"
+        plt.savefig(simple_save_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        print(f"   💾 Saved simple: {simple_save_path}")
         
         print(f"   💾 Saved: {save_path}")
         
@@ -364,6 +409,7 @@ with torch.no_grad():
         results.append({
             'image_id': img_id,
             'pieces_correct': pieces_correct,
+            'total_pieces': total_pieces,
             'piece_accuracy': piece_acc_score,
             'perfect_puzzle': total_correct.item(),
             'position_correct': position_correct.sum().item(),
@@ -371,33 +417,34 @@ with torch.no_grad():
         })
 
 print(f"\n" + "="*80)
-print(f"🎯 ROTATION MODEL ANALYSIS COMPLETE!")
+print(f"🎯 12x12 ROTATION MODEL ANALYSIS COMPLETE!")
 print(f"="*80)
 
 # Summary statistics
 perfect_count = sum(1 for r in results if r['perfect_puzzle'])
 avg_piece_acc = np.mean([r['piece_accuracy'] for r in results])
 avg_pieces_correct = np.mean([r['pieces_correct'] for r in results])
+total_pieces = results[0]['total_pieces'] if results else 144
 
 print(f"\n📊 SUMMARY STATISTICS:")
 print(f"   Total examples analyzed: {len(results)}")
 print(f"   Perfect puzzles: {perfect_count}/{len(results)} ({perfect_count/len(results)*100:.1f}%)")
 print(f"   Average piece accuracy: {avg_piece_acc:.3f}")
-print(f"   Average pieces correct: {avg_pieces_correct:.1f}/16")
+print(f"   Average pieces correct: {avg_pieces_correct:.1f}/{total_pieces}")
 
 print(f"\n📋 DETAILED RESULTS:")
 for r in results:
-    status = "PERFECT" if r['perfect_puzzle'] else f"{r['pieces_correct']}/16"
-    rot_info = f" | Rot: {r['rotation_correct']}/16" if r['rotation_correct'] is not None else ""
-    print(f"   Image {r['image_id']:3d}: {status:>7s} pieces ({r['piece_accuracy']:.3f}) | Pos: {r['position_correct']}/16{rot_info}")
+    status = "PERFECT" if r['perfect_puzzle'] else f"{r['pieces_correct']}/{r['total_pieces']}"
+    rot_info = f" | Rot: {r['rotation_correct']}/{r['total_pieces']}" if r['rotation_correct'] is not None else ""
+    print(f"   Image {r['image_id']:3d}: {status:>9s} pieces ({r['piece_accuracy']:.3f}) | Pos: {r['position_correct']}/{r['total_pieces']}{rot_info}")
 
-print(f"\n💡 KEY INSIGHTS:")
-print(f"   🎯 This analysis reveals why 90.32% piece accuracy ≠ 38.56% perfect puzzles")
-print(f"   📊 Many puzzles have 14-15 pieces correct, but 1-2 pieces wrong")
-print(f"   🔄 Rotation adds complexity: must get BOTH position AND angle correct")
-print(f"   ⚠️  Even small rotation errors (few degrees off) count as 'wrong' pieces")
-print(f"   📈 High individual piece performance, but lower perfect puzzle rate")
+print(f"\n💡 KEY INSIGHTS FOR 12x12 PUZZLES:")
+print(f"   🎯 12x12 = 144 pieces! Much more complex than 4x4 (16 pieces)")
+print(f"   📊 Perfect puzzle rate likely much lower due to exponential difficulty")
+print(f"   🔄 Rotation errors compound significantly with more pieces")
+print(f"   ⚠️  Even 95% accuracy = ~7 wrong pieces = failed puzzle")
+print(f"   📈 Model performance under extreme complexity test")
 
 print(f"\n📁 Visual results saved to: {output_dir}/")
-print(f"   Check analysis_image_*.png files for detailed breakdowns")
-print(f"\n🚀 Analysis complete! Check the saved images to see the rotation challenges.")
+print(f"   Check analysis_12x12_image_*.png files for detailed breakdowns")
+print(f"\n🚀 12x12 Analysis complete! This tests the model's limits.")
