@@ -66,3 +66,19 @@ pip uninstall -y numpy
 pip install "numpy<2"
 pip install pytorch3d -f https://dl.fbaipublicfiles.com/pytorch3d/packaging/wheels/py39_cu113_pyt1121/download.html
 pip install transformers==4.25.1
+
+#IDUN:
+python puzzle_diff/train_script.py \
+  -dataset imagenet \
+  -puzzle_sizes 6 \
+  -batch_size 64 \
+  -gpus 4 \
+  -steps 300 \
+  -sampling DDIM \
+  -inference_ratio 10 \
+  -num_workers 16 \
+  --rotation True \
+  --degree 100% \
+  --backbone resnet18equiv \
+  --architecture transformer \
+  --acc_grad 2
