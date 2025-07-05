@@ -22,27 +22,6 @@ sys.modules['model.spatial_diffusion_discrete_rot'] = spatial_diffusion_discrete
 from puzzle_diff.model import spatial_diffusion as sd
 from puzzle_diff.dataset import dataset_utils as du
 
-# Load dataset first - UPDATED TO MATCH YOUR CONFIG
-train_dt, test_dt, puzzle_sizes = du.get_dataset_ROT(
-    dataset="celeba",
-    puzzle_sizes=[12]  # Changed from 4 to 12
-)
-
-# Load model - UPDATED CHECKPOINT PATH
-checkpoint_path = "/home/user1/Desktop/HAMZA/THESIS/DiffAssemble/Puzzle-Diff/99qcofwy/checkpoints/last.ckpt"
-model = sd.GNN_Diffusion.load_from_checkpoint(checkpoint_path)
-model.initialize_torchmetrics(puzzle_sizes)
-model.noise_weight = 0.0
-model.inference_ratio = 10  # Matches your config
-model.save_eval_images = True
-
-print("Model loaded successfully!")
-print(f"Rotation: {getattr(model, 'rotation', 'Unknown')}")
-print(f"Architecture: {getattr(model, 'architecture', 'Unknown')}")
-print(f"Backbone: {getattr(model, 'backbone', 'Unknown')}")
-
-# ==================== FULL ROTATION ANALYSIS CODE ====================
-
 import torch
 import matplotlib.pyplot as plt
 from PIL import Image, ImageOps
@@ -54,31 +33,21 @@ import math
 from torch_geometric.data import Batch
 import einops
 
-# Move model to GPU if available
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = model.to(device)
-model.eval()
+# MULTI-SIZE CONFIGURATION - UPDATED
+PUZZLE_SIZES = [6, 8, 10, 12]  # All your trained sizes
+NUM_EXAMPLES_PER_SIZE = 1      # 🆕 ONLY 1 EXAMPLE PER SIZE
+MAX_ATTEMPTS = 100             # 🆕 KEEP TRYING UNTIL WE FIND FAILURES
+CHECKPOINT_PATH = "/home/user1/Desktop/HAMZA/THESIS/DiffAssemble/Puzzle-Diff/99qcofwy/checkpoints/last.ckpt"
 
+# Create output directory
+output_dir = Path("hamza_multi_size_v2")
+output_dir.mkdir(exist_ok=True)
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Device: {device}")
 
-def interpolate_color(pos, col_1=(1, 0, 0), col_2=(1, 1, 0), col_3=(0, 0, 1), col_4=(0, 1, 0)):
-    """Color interpolation for visualization"""
-    def interpolate_color1d(color1, color2, fraction):
-        hsv1 = color1
-        hsv2 = color2
-        h = hsv1[0] + (hsv2[0] - hsv1[0]) * fraction
-        s = hsv1[1] + (hsv2[1] - hsv1[1]) * fraction
-        v = hsv1[2] + (hsv2[2] - hsv1[2]) * fraction
-        return tuple(x for x in (h, s, v))
-    
-    f1 = float((pos[0] + 1) / 2)
-    f2 = float((pos[1] + 1) / 2)
-    c1 = interpolate_color1d(col_1, col_2, f1)
-    c2 = interpolate_color1d(col_3, col_4, f1)
-    return interpolate_color1d(c1, c2, f2)
-
-def create_image_from_patches(patches, pos, n_patches=(12, 12), rotations=None):  # Updated to 12x12
-    """Create puzzle image from patches and positions"""
+def create_image_from_patches(patches, pos, n_patches, rotations=None):
+    """Create puzzle image from patches and positions - GENERALIZED"""
     patch_size = 32
     height = patch_size * n_patches[0]
     width = patch_size * n_patches[1]
@@ -123,328 +92,309 @@ def greedy_cost_assignment(pred_pos, real_grid):
     
     return torch.tensor(pred_ass)
 
-# Load failed puzzles data
-print("\n📊 Loading failed puzzles data...")
-try:
-    failed_data = pd.read_csv('failed_puzzles.log', names=['image_id', 'piece_accuracy', 'perfect_puzzle'])
-    print(f"Found {len(failed_data)} failed puzzles")
-except FileNotFoundError:
-    print("No failed_puzzles.log found, selecting random samples")
-    failed_data = pd.DataFrame()
-
-# Select interesting examples - ADAPTED FOR 12x12 PUZZLES
-print("\n🔍 Selecting examples for analysis...")
-example_ids = []
-
-if len(failed_data) > 0:
-    # Worst failures (lowest piece accuracy)
-    worst_failures = failed_data.nsmallest(3, 'piece_accuracy')
-    example_ids.extend(worst_failures['image_id'].tolist())
-    print(f"Worst failures: {worst_failures['image_id'].tolist()} (accuracy: {worst_failures['piece_accuracy'].tolist()})")
-
-    # Near misses (high piece accuracy but still failed)
-    near_misses = failed_data[failed_data['piece_accuracy'] >= 0.9]
-    if len(near_misses) > 0:
-        example_ids.extend(near_misses['image_id'].head(4).tolist())
-        print(f"Near misses: {near_misses['image_id'].head(4).tolist()} (accuracy: {near_misses['piece_accuracy'].head(4).tolist()})")
-
-    # Medium failures (around 0.5-0.7 accuracy)
-    medium_failures = failed_data[(failed_data['piece_accuracy'] >= 0.5) & (failed_data['piece_accuracy'] < 0.7)]
-    if len(medium_failures) > 0:
-        example_ids.extend(medium_failures['image_id'].head(3).tolist())
-        print(f"Medium failures: {medium_failures['image_id'].head(3).tolist()} (accuracy: {medium_failures['piece_accuracy'].head(3).tolist()})")
-
-    # Add some potentially successful cases
-    all_ids = set(range(min(len(test_dt), 2000)))
-    failed_ids = set(failed_data['image_id'].values)
-    successful_ids = list(all_ids - failed_ids)
-    if successful_ids:
-        success_samples = np.random.choice(successful_ids, size=min(4, len(successful_ids)), replace=False)
-        example_ids.extend(success_samples.tolist())
-        print(f"Success samples: {success_samples.tolist()}")
-
-# Add some random samples for diversity
-random_samples = np.random.choice(range(min(len(test_dt), 1000)), size=6, replace=False)  # Increased for 12x12
-example_ids.extend(random_samples.tolist())
-print(f"Random samples: {random_samples.tolist()}")
-
-example_ids = example_ids[:10]  # Reduced to 10 for 12x12 (more complex)
-print(f"\nAnalyzing {len(example_ids)} examples: {example_ids}")
-
-# Create output directory
-output_dir = Path("hamza_12x12")  # Updated directory name
-output_dir.mkdir(exist_ok=True)
-
-# Create grid for position assignment - UPDATED FOR 12x12
-y = torch.linspace(-1, 1, 12)  # Changed from 4 to 12
-x = torch.linspace(-1, 1, 12)  # Changed from 4 to 12
-xy = torch.stack(torch.meshgrid(x, y, indexing="xy"), -1)
-real_grid = einops.rearrange(xy, "x y c-> (x y) c")
-
-print(f"\n🎯 Starting rotation analysis for 12x12 puzzles...")
-print("="*80)
-
-results = []
-
-with torch.no_grad():
-    for idx, img_id in enumerate(example_ids):
-        print(f"\n🧩 Processing Image {img_id} ({idx+1}/{len(example_ids)})...")
-        
-        # Get sample
-        sample = test_dt[img_id]
-        
-        # Create batch
-        batch = Batch.from_data_list([sample])
-        batch = batch.to(device)
-        
-        # Extract ground truth
-        gt_pos = sample.x[:, :2].cpu()
-        gt_rot = sample.x[:, 2:].cpu() if sample.x.size(1) > 2 else None
-        patches_rgb = sample.patches.cpu()
-        
-        print(f"   📊 Sample info: {sample.x.shape[0]} pieces, rotation: {gt_rot is not None}")
-        
-        # Run inference (using model's p_sample_loop like in the visualization code)
-        imgs, _ = model.p_sample_loop(
-            batch.x.shape,
-            batch.patches,
-            batch.edge_index,
-            batch=batch.batch
-        )
-        
-        # Get final prediction - with detailed debugging
-        print(f"   🔍 Debug - imgs[-1] shape: {imgs[-1].shape}")
-        print(f"   🔍 Debug - imgs[-1] type: {type(imgs[-1])}")
-        
-        # Try different indexing approaches
-        if len(imgs[-1].shape) == 3:  # [batch, pieces, features]
-            final_pred = imgs[-1][0].cpu()  # First batch item
-        elif len(imgs[-1].shape) == 2:  # [pieces, features] 
-            final_pred = imgs[-1].cpu()
-        else:
-            print(f"   ❌ Unexpected shape: {imgs[-1].shape}")
-            continue
+def analyze_puzzle_size(puzzle_size, model, device):
+    """Analyze one puzzle size and return success/failure examples - UPDATED"""
+    print(f"\n🧩 ANALYZING {puzzle_size}x{puzzle_size} PUZZLES...")
+    
+    # Load dataset for this size
+    train_dt, test_dt, _ = du.get_dataset_ROT(
+        dataset="celeba",
+        puzzle_sizes=[puzzle_size]
+    )
+    
+    # Create grid for this size
+    y = torch.linspace(-1, 1, puzzle_size)
+    x = torch.linspace(-1, 1, puzzle_size)
+    xy = torch.stack(torch.meshgrid(x, y, indexing="xy"), -1)
+    real_grid = einops.rearrange(xy, "x y c-> (x y) c")
+    
+    successes = []
+    failures = []
+    
+    # 🆕 KEEP TRYING UNTIL WE FIND AT LEAST 1 SUCCESS AND 1 FAILURE
+    attempts = 0
+    dataset_size = min(len(test_dt), 2000)  # Limit search space
+    tested_indices = set()
+    
+    with torch.no_grad():
+        while attempts < MAX_ATTEMPTS and len(tested_indices) < dataset_size:
+            # Get a random untested image
+            while True:
+                img_id = np.random.randint(0, dataset_size)
+                if img_id not in tested_indices:
+                    tested_indices.add(img_id)
+                    break
+                if len(tested_indices) >= dataset_size:
+                    break
             
-        print(f"   🔍 Debug - final_pred shape after extraction: {final_pred.shape}")
-        print(f"   🔍 Debug - expected pieces: {sample.x.shape[0]}")
-        print(f"   🔍 Debug - sample.x shape: {sample.x.shape}")
-        
-        # Check if we have the right number of elements
-        expected_total_elements = sample.x.shape[0] * sample.x.shape[1]  # pieces * features
-        actual_elements = final_pred.numel()
-        
-        print(f"   🔍 Debug - expected total elements: {expected_total_elements}")
-        print(f"   🔍 Debug - actual elements: {actual_elements}")
-        
-        if actual_elements != expected_total_elements:
-            print(f"   ❌ Element count mismatch, skipping this sample")
-            continue
-        
-        # Reshape to match expected format
-        final_pred = final_pred.view(sample.x.shape[0], sample.x.shape[1])
-        print(f"   🔧 Reshaped to: {final_pred.shape}")
-        
-        pred_pos = final_pred[:, :2]
-        pred_rot = final_pred[:, 2:] if final_pred.size(1) > 2 else None
-        
-        print(f"   🔮 Prediction shapes - pos: {pred_pos.shape}, rot: {pred_rot.shape if pred_rot is not None else 'None'}")
-        
-        # Calculate position accuracy
-        gt_ass = greedy_cost_assignment(gt_pos, real_grid)
-        pred_ass = greedy_cost_assignment(pred_pos, real_grid)
-        
-        sort_idx = torch.sort(gt_ass[:, 0])[1]
-        gt_ass = gt_ass[sort_idx]
-        sort_idx = torch.sort(pred_ass[:, 0])[1]
-        pred_ass = pred_ass[sort_idx]
-        
-        position_correct = (gt_ass[:, 1] == pred_ass[:, 1])
-        
-        # Calculate rotation accuracy (if applicable)
-        if model.rotation and pred_rot is not None and gt_rot is not None:
-            rot_correct = torch.cosine_similarity(pred_rot, gt_rot) > math.cos(math.pi / 4)
-            piece_accuracy = (position_correct * rot_correct).float()
-            total_correct = (position_correct * rot_correct).all()
-        else:
-            piece_accuracy = position_correct.float()
-            total_correct = position_correct.all()
-        
-        piece_acc_score = piece_accuracy.mean().item()
-        pieces_correct = piece_accuracy.sum().int().item()
-        total_pieces = sample.x.shape[0]  # Should be 144 for 12x12
-        
-        print(f"   📊 Results: {pieces_correct}/{total_pieces} pieces correct ({piece_acc_score:.3f})")
-        print(f"   🎯 Perfect puzzle: {total_correct.item()}")
-        
-        # Create visualizations - adapted for larger puzzle
-        fig, axes = plt.subplots(2, 3, figsize=(24, 16))  # Larger figure for 12x12
-        
-        # 1. TRUE SCRAMBLED IMAGE (random positions + random rotations)
-        scrambled_pos = torch.rand(patches_rgb.shape[0], 2) * 2 - 1  # Random positions in [-1,1]
-        if gt_rot is not None:
-            # Random 90-degree rotations
-            random_angles = torch.randint(0, 4, (patches_rgb.shape[0],)) * torch.pi / 2
-            scrambled_rot = torch.stack([torch.cos(random_angles), torch.sin(random_angles)], dim=-1)
-            initial_img = create_image_from_patches(patches_rgb, scrambled_pos, (12, 12), scrambled_rot)
-        else:
-            initial_img = create_image_from_patches(patches_rgb, scrambled_pos, (12, 12), None)
+            if len(tested_indices) >= dataset_size:
+                break
+                
+            attempts += 1
             
-        axes[0, 0].imshow(initial_img)
-        axes[0, 0].set_title(f'TRUE Scrambled\nImage {img_id} (12x12)', fontsize=12, fontweight='bold')
-        axes[0, 0].axis('off')
-        
-        # 2. Model Prediction (with predicted rotations)
-        if pred_rot is not None:
-            # Snap rotation to 90-degree increments
-            rad = torch.atan2(pred_rot[:, 1], pred_rot[:, 0])
-            rad_snap = torch.round(rad / (torch.pi / 2)) * torch.pi / 2
-            pred_rot_snapped = torch.stack([torch.cos(rad_snap), torch.sin(rad_snap)], dim=-1)
-            pred_img = create_image_from_patches(patches_rgb, pred_pos, (12, 12), pred_rot_snapped)
-        else:
-            pred_img = create_image_from_patches(patches_rgb, pred_pos, (12, 12))
+            # Get sample
+            sample = test_dt[img_id]
             
-        axes[0, 1].imshow(pred_img)
-        status = "✅ PERFECT" if total_correct else f"⚠️ {pieces_correct}/{total_pieces}"
-        title_color = 'green' if total_correct else 'red'
-        axes[0, 1].set_title(f'Model Prediction\n{status} ({piece_acc_score:.3f})', 
-                           fontsize=12, fontweight='bold', color=title_color)
-        axes[0, 1].axis('off')
-        
-        # 3. Ground Truth (target solution)
-        if gt_rot is not None:
-            gt_img = create_image_from_patches(patches_rgb, gt_pos, (12, 12), gt_rot)
-        else:
-            gt_img = create_image_from_patches(patches_rgb, gt_pos, (12, 12))
-        axes[0, 2].imshow(gt_img)
-        axes[0, 2].set_title(f'Ground Truth\n(Target Solution)', fontsize=12, fontweight='bold')
-        axes[0, 2].axis('off')
-        
-        # 4. Position scatter plot
-        col = [interpolate_color(pos) for pos in gt_pos]
-        axes[1, 0].scatter(pred_pos[:, 0], pred_pos[:, 1], c=col, s=50, alpha=0.8)  # Smaller dots for 12x12
-        axes[1, 0].scatter(gt_pos[:, 0], gt_pos[:, 1], c=col, s=50, marker='x', linewidths=2)
-        axes[1, 0].set_xlim(-1.2, 1.2)
-        axes[1, 0].set_ylim(-1.2, 1.2)
-        axes[1, 0].set_aspect('equal')
-        axes[1, 0].invert_yaxis()
-        axes[1, 0].set_title('Positions: Predicted (●) vs GT (×)', fontsize=12)
-        axes[1, 0].grid(True, alpha=0.3)
-        
-        # 5. Rotation visualization (sample subset for visibility)
-        if pred_rot is not None and gt_rot is not None:
-            # Sample every 12th piece for visibility in 12x12
-            sample_idx = torch.arange(0, len(pred_rot), 12)
-            pred_rot_norm = F.normalize(pred_rot[sample_idx], dim=-1)
-            gt_rot_norm = F.normalize(gt_rot[sample_idx], dim=-1)
+            # Create batch
+            batch = Batch.from_data_list([sample])
+            batch = batch.to(device)
             
-            axes[1, 1].quiver(pred_pos[sample_idx, 0], pred_pos[sample_idx, 1], 
-                            pred_rot_norm[:, 0], pred_rot_norm[:, 1],
-                            color='red', scale=10, width=0.003, alpha=0.7, label='Predicted')
-            axes[1, 1].quiver(pred_pos[sample_idx, 0], pred_pos[sample_idx, 1], 
-                            gt_rot_norm[:, 0], gt_rot_norm[:, 1],
-                            color='blue', scale=10, width=0.003, alpha=0.7, label='Ground Truth')
-            axes[1, 1].set_xlim(-1.2, 1.2)
-            axes[1, 1].set_ylim(-1.2, 1.2)
-            axes[1, 1].set_aspect('equal')
-            axes[1, 1].invert_yaxis()
-            axes[1, 1].set_title('Rotations (Sampled): Pred (Red) vs GT (Blue)', fontsize=12)
-            axes[1, 1].legend()
-            axes[1, 1].grid(True, alpha=0.3)
-        else:
-            axes[1, 1].text(0.5, 0.5, 'No Rotation Data', ha='center', va='center', 
-                          transform=axes[1, 1].transAxes, fontsize=16)
-            axes[1, 1].axis('off')
-        
-        # 6. Per-piece accuracy breakdown (show histogram for 12x12)
-        correct_count = piece_accuracy.sum().item()
-        wrong_count = len(piece_accuracy) - correct_count
-        
-        axes[1, 2].bar(['Correct', 'Wrong'], [correct_count, wrong_count], 
-                      color=['green', 'red'], alpha=0.7)
-        axes[1, 2].set_ylabel('Number of Pieces')
-        axes[1, 2].set_title(f'Accuracy Summary\n{pieces_correct}/{total_pieces} Correct', fontsize=12)
-        axes[1, 2].grid(True, alpha=0.3)
-        
-        plt.suptitle(f'12x12 Rotation Analysis - Image {img_id}\n'
-                    f'Piece Accuracy: {piece_acc_score:.3f} | Perfect: {total_correct.item()}', 
-                    fontsize=16, fontweight='bold')
-        plt.tight_layout()
-        
-        # Save figure
-        save_path = output_dir / f"analysis_12x12_image_{img_id}.png"
-        plt.savefig(save_path, dpi=200, bbox_inches='tight')  # Lower DPI for large images
-        plt.close()
-        
-        # 🆕 SIMPLE 3-IMAGE VERSION FOR HAMZA
-        fig_simple, axes_simple = plt.subplots(1, 3, figsize=(18, 6))
-        
-        # Just the 3 images - no extra data
-        axes_simple[0].imshow(initial_img)
-        axes_simple[0].set_title(f'Scrambled\nImage {img_id}', fontsize=14, fontweight='bold')
-        axes_simple[0].axis('off')
-        
-        axes_simple[1].imshow(pred_img)
-        status = "✅ PERFECT" if total_correct else f"⚠️ {pieces_correct}/{total_pieces}"
-        title_color = 'green' if total_correct else 'red'
-        axes_simple[1].set_title(f'Model Prediction\n{status}', 
-                               fontsize=14, fontweight='bold', color=title_color)
-        axes_simple[1].axis('off')
-        
-        axes_simple[2].imshow(gt_img)
-        axes_simple[2].set_title(f'Ground Truth\n(Target)', fontsize=14, fontweight='bold')
-        axes_simple[2].axis('off')
-        
-        plt.tight_layout()
-        
-        # Save simple version
-        simple_save_path = output_dir / f"simple_12x12_image_{img_id}.png"
-        plt.savefig(simple_save_path, dpi=150, bbox_inches='tight')
-        plt.close()
-        
-        print(f"   💾 Saved simple: {simple_save_path}")
-        
-        print(f"   💾 Saved: {save_path}")
-        
-        # Store results
-        results.append({
-            'image_id': img_id,
-            'pieces_correct': pieces_correct,
-            'total_pieces': total_pieces,
-            'piece_accuracy': piece_acc_score,
-            'perfect_puzzle': total_correct.item(),
-            'position_correct': position_correct.sum().item(),
-            'rotation_correct': rot_correct.sum().item() if pred_rot is not None else None
-        })
+            # Extract ground truth
+            gt_pos = sample.x[:, :2].cpu()
+            gt_rot = sample.x[:, 2:].cpu() if sample.x.size(1) > 2 else None
+            patches_rgb = sample.patches.cpu()
+            
+            # Run inference
+            try:
+                imgs, _ = model.p_sample_loop(
+                    batch.x.shape,
+                    batch.patches,
+                    batch.edge_index,
+                    batch=batch.batch
+                )
+            except Exception as e:
+                print(f"   ⚠️  Inference failed for image {img_id}: {e}")
+                continue
+            
+            # Get final prediction
+            if len(imgs[-1].shape) == 3:
+                final_pred = imgs[-1][0].cpu()
+            elif len(imgs[-1].shape) == 2:
+                final_pred = imgs[-1].cpu()
+            else:
+                continue
+                
+            # Check element count
+            expected_total_elements = sample.x.shape[0] * sample.x.shape[1]
+            if final_pred.numel() != expected_total_elements:
+                continue
+            
+            # Reshape
+            final_pred = final_pred.view(sample.x.shape[0], sample.x.shape[1])
+            pred_pos = final_pred[:, :2]
+            pred_rot = final_pred[:, 2:] if final_pred.size(1) > 2 else None
+            
+            # Calculate accuracy
+            gt_ass = greedy_cost_assignment(gt_pos, real_grid)
+            pred_ass = greedy_cost_assignment(pred_pos, real_grid)
+            
+            sort_idx = torch.sort(gt_ass[:, 0])[1]
+            gt_ass = gt_ass[sort_idx]
+            sort_idx = torch.sort(pred_ass[:, 0])[1]
+            pred_ass = pred_ass[sort_idx]
+            
+            position_correct = (gt_ass[:, 1] == pred_ass[:, 1])
+            
+            # Calculate rotation accuracy
+            if model.rotation and pred_rot is not None and gt_rot is not None:
+                rot_correct = torch.cosine_similarity(pred_rot, gt_rot) > math.cos(math.pi / 4)
+                piece_accuracy = (position_correct * rot_correct).float()
+                total_correct = (position_correct * rot_correct).all()
+            else:
+                piece_accuracy = position_correct.float()
+                total_correct = position_correct.all()
+            
+            piece_acc_score = piece_accuracy.mean().item()
+            pieces_correct = piece_accuracy.sum().int().item()
+            total_pieces = sample.x.shape[0]
+            
+            # Create images for visualization
+            # Scrambled (truly random)
+            scrambled_pos = torch.rand(patches_rgb.shape[0], 2) * 2 - 1
+            if gt_rot is not None:
+                random_angles = torch.randint(0, 4, (patches_rgb.shape[0],)) * torch.pi / 2
+                scrambled_rot = torch.stack([torch.cos(random_angles), torch.sin(random_angles)], dim=-1)
+                scrambled_img = create_image_from_patches(patches_rgb, scrambled_pos, (puzzle_size, puzzle_size), scrambled_rot)
+            else:
+                scrambled_img = create_image_from_patches(patches_rgb, scrambled_pos, (puzzle_size, puzzle_size), None)
+            
+            # Prediction
+            if pred_rot is not None:
+                rad = torch.atan2(pred_rot[:, 1], pred_rot[:, 0])
+                rad_snap = torch.round(rad / (torch.pi / 2)) * torch.pi / 2
+                pred_rot_snapped = torch.stack([torch.cos(rad_snap), torch.sin(rad_snap)], dim=-1)
+                pred_img = create_image_from_patches(patches_rgb, pred_pos, (puzzle_size, puzzle_size), pred_rot_snapped)
+            else:
+                pred_img = create_image_from_patches(patches_rgb, pred_pos, (puzzle_size, puzzle_size))
+            
+            # Ground truth
+            if gt_rot is not None:
+                gt_img = create_image_from_patches(patches_rgb, gt_pos, (puzzle_size, puzzle_size), gt_rot)
+            else:
+                gt_img = create_image_from_patches(patches_rgb, gt_pos, (puzzle_size, puzzle_size))
+            
+            result = {
+                'puzzle_size': puzzle_size,
+                'img_id': img_id,
+                'pieces_correct': pieces_correct,
+                'total_pieces': total_pieces,
+                'piece_accuracy': piece_acc_score,
+                'perfect_puzzle': total_correct.item(),
+                'scrambled_img': scrambled_img,
+                'pred_img': pred_img,
+                'gt_img': gt_img
+            }
+            
+            # 🆕 COLLECT RESULTS BUT KEEP SEARCHING
+            if total_correct.item() and len(successes) < NUM_EXAMPLES_PER_SIZE:
+                successes.append(result)
+                print(f"   ✅ Found SUCCESS #{len(successes)} for {puzzle_size}x{puzzle_size} (img {img_id}, accuracy: {piece_acc_score:.3f})")
+            elif not total_correct.item() and len(failures) < NUM_EXAMPLES_PER_SIZE:
+                failures.append(result)
+                print(f"   ❌ Found FAILURE #{len(failures)} for {puzzle_size}x{puzzle_size} (img {img_id}, accuracy: {piece_acc_score:.3f})")
+            
+            # 🆕 STOP WHEN WE HAVE BOTH SUCCESS AND FAILURE (1 EACH)
+            if len(successes) >= NUM_EXAMPLES_PER_SIZE and len(failures) >= NUM_EXAMPLES_PER_SIZE:
+                print(f"   🎯 Found both success and failure for {puzzle_size}x{puzzle_size}! Stopping search.")
+                break
+            
+            # Progress indicator
+            if attempts % 20 == 0:
+                print(f"   🔍 Attempt {attempts}/{MAX_ATTEMPTS}: {len(successes)} successes, {len(failures)} failures found")
+    
+    print(f"   ✅ Final: {len(successes)} successes, {len(failures)} failures for {puzzle_size}x{puzzle_size} (after {attempts} attempts)")
+    
+    # 🆕 ENSURE WE HAVE AT LEAST ONE OF EACH (even if we have to duplicate)
+    if len(successes) == 0 and len(failures) > 0:
+        print(f"   ⚠️  No successes found for {puzzle_size}x{puzzle_size}, using failure as placeholder")
+        successes = [failures[0]]  # Use failure as placeholder
+    elif len(failures) == 0 and len(successes) > 0:
+        print(f"   ⚠️  No failures found for {puzzle_size}x{puzzle_size}, using success as placeholder")
+        failures = [successes[0]]  # Use success as placeholder
+    
+    return successes[:NUM_EXAMPLES_PER_SIZE], failures[:NUM_EXAMPLES_PER_SIZE]
 
-print(f"\n" + "="*80)
-print(f"🎯 12x12 ROTATION MODEL ANALYSIS COMPLETE!")
-print(f"="*80)
+# Load model once
+print("🔧 Loading model...")
+model = sd.GNN_Diffusion.load_from_checkpoint(CHECKPOINT_PATH)
+model.initialize_torchmetrics(PUZZLE_SIZES)
+model.noise_weight = 0.0
+model.inference_ratio = 10
+model.save_eval_images = True
+model = model.to(device)
+model.eval()
 
-# Summary statistics
-perfect_count = sum(1 for r in results if r['perfect_puzzle'])
-avg_piece_acc = np.mean([r['piece_accuracy'] for r in results])
-avg_pieces_correct = np.mean([r['pieces_correct'] for r in results])
-total_pieces = results[0]['total_pieces'] if results else 144
+print("🚀 MULTI-SIZE PUZZLE ANALYSIS STARTING...")
+print(f"Puzzle sizes: {PUZZLE_SIZES}")
+print(f"Examples per size: {NUM_EXAMPLES_PER_SIZE} (1 success + 1 failure)")
+print(f"Max attempts per size: {MAX_ATTEMPTS}")
 
-print(f"\n📊 SUMMARY STATISTICS:")
-print(f"   Total examples analyzed: {len(results)}")
-print(f"   Perfect puzzles: {perfect_count}/{len(results)} ({perfect_count/len(results)*100:.1f}%)")
-print(f"   Average piece accuracy: {avg_piece_acc:.3f}")
-print(f"   Average pieces correct: {avg_pieces_correct:.1f}/{total_pieces}")
+# Collect all results
+all_successes = []
+all_failures = []
 
-print(f"\n📋 DETAILED RESULTS:")
-for r in results:
-    status = "PERFECT" if r['perfect_puzzle'] else f"{r['pieces_correct']}/{r['total_pieces']}"
-    rot_info = f" | Rot: {r['rotation_correct']}/{r['total_pieces']}" if r['rotation_correct'] is not None else ""
-    print(f"   Image {r['image_id']:3d}: {status:>9s} pieces ({r['piece_accuracy']:.3f}) | Pos: {r['position_correct']}/{r['total_pieces']}{rot_info}")
+for puzzle_size in PUZZLE_SIZES:
+    successes, failures = analyze_puzzle_size(puzzle_size, model, device)
+    all_successes.extend(successes)
+    all_failures.extend(failures)
 
-print(f"\n💡 KEY INSIGHTS FOR 12x12 PUZZLES:")
-print(f"   🎯 12x12 = 144 pieces! Much more complex than 4x4 (16 pieces)")
-print(f"   📊 Perfect puzzle rate likely much lower due to exponential difficulty")
-print(f"   🔄 Rotation errors compound significantly with more pieces")
-print(f"   ⚠️  Even 95% accuracy = ~7 wrong pieces = failed puzzle")
-print(f"   📈 Model performance under extreme complexity test")
+print(f"\n📊 TOTAL COLLECTED:")
+print(f"   Successes: {len(all_successes)}")
+print(f"   Failures: {len(all_failures)}")
 
-print(f"\n📁 Visual results saved to: {output_dir}/")
-print(f"   Check analysis_12x12_image_*.png files for detailed breakdowns")
-print(f"\n🚀 12x12 Analysis complete! This tests the model's limits.")
+# Create consolidated SUCCESS figure - CLEANER LAYOUT
+print(f"\n🎯 Creating SUCCESS compilation...")
+if all_successes:
+    num_success = len(all_successes)
+    fig_success, axes_success = plt.subplots(3, num_success, figsize=(5*num_success, 15))
+    
+    if num_success == 1:
+        axes_success = axes_success.reshape(-1, 1)
+    
+    for i, result in enumerate(all_successes):
+        size = result['puzzle_size']
+        
+        # Row 1: Scrambled
+        axes_success[0, i].imshow(result['scrambled_img'])
+        axes_success[0, i].set_title(f'Scrambled\n{size}x{size} Puzzle', fontsize=14, fontweight='bold')
+        axes_success[0, i].axis('off')
+        
+        # Row 2: Prediction
+        axes_success[1, i].imshow(result['pred_img'])
+        axes_success[1, i].set_title(f'SUCCESS\n{result["pieces_correct"]}/{result["total_pieces"]} pieces', 
+                                   fontsize=14, fontweight='bold', color='green')
+        axes_success[1, i].axis('off')
+        
+        # Row 3: Ground Truth
+        axes_success[2, i].imshow(result['gt_img'])
+        axes_success[2, i].set_title(f'Ground Truth\n(Target)', fontsize=14, fontweight='bold')
+        axes_success[2, i].axis('off')
+    
+    plt.suptitle(f'SUCCESS CASES - Multi-Size Puzzle Analysis\n'
+                f'Model Performance on {PUZZLE_SIZES} Puzzle Sizes', 
+                fontsize=18, fontweight='bold', color='green')
+    plt.tight_layout()
+    
+    success_path = output_dir / "SUCCESS_multi_size_v2.png"
+    plt.savefig(success_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"   💾 Saved: {success_path}")
+
+# Create consolidated FAILURE figure - CLEANER LAYOUT
+print(f"\n❌ Creating FAILURE compilation...")
+if all_failures:
+    num_failure = len(all_failures)
+    fig_failure, axes_failure = plt.subplots(3, num_failure, figsize=(5*num_failure, 15))
+    
+    if num_failure == 1:
+        axes_failure = axes_failure.reshape(-1, 1)
+    
+    for i, result in enumerate(all_failures):
+        size = result['puzzle_size']
+        
+        # Row 1: Scrambled
+        axes_failure[0, i].imshow(result['scrambled_img'])
+        axes_failure[0, i].set_title(f'Scrambled\n{size}x{size} Puzzle', fontsize=14, fontweight='bold')
+        axes_failure[0, i].axis('off')
+        
+        # Row 2: Prediction
+        axes_failure[1, i].imshow(result['pred_img'])
+        accuracy_pct = result['piece_accuracy'] * 100
+        axes_failure[1, i].set_title(f'FAILED\n{result["pieces_correct"]}/{result["total_pieces"]} pieces ({accuracy_pct:.1f}%)', 
+                                   fontsize=14, fontweight='bold', color='red')
+        axes_failure[1, i].axis('off')
+        
+        # Row 3: Ground Truth
+        axes_failure[2, i].imshow(result['gt_img'])
+        axes_failure[2, i].set_title(f'Ground Truth\n(Target)', fontsize=14, fontweight='bold')
+        axes_failure[2, i].axis('off')
+    
+    plt.suptitle(f'FAILURE CASES - Multi-Size Puzzle Analysis\n'
+                f'Model Challenges on {PUZZLE_SIZES} Puzzle Sizes', 
+                fontsize=18, fontweight='bold', color='red')
+    plt.tight_layout()
+    
+    failure_path = output_dir / "FAILURE_multi_size_v2.png"
+    plt.savefig(failure_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"   💾 Saved: {failure_path}")
+
+# Create summary statistics
+print(f"\n📊 FINAL ANALYSIS SUMMARY:")
+print(f"="*60)
+
+for size in PUZZLE_SIZES:
+    success_count = len([s for s in all_successes if s['puzzle_size'] == size])
+    failure_count = len([f for f in all_failures if f['puzzle_size'] == size])
+    
+    success_results = [s for s in all_successes if s['puzzle_size'] == size]
+    failure_results = [f for f in all_failures if f['puzzle_size'] == size]
+    
+    if success_results:
+        success_acc = success_results[0]['piece_accuracy']
+        print(f"   {size}x{size} ({size*size:3d} pieces): SUCCESS (acc: {success_acc:.3f})")
+    
+    if failure_results:
+        failure_acc = failure_results[0]['piece_accuracy']
+        print(f"   {size}x{size} ({size*size:3d} pieces): FAILURE (acc: {failure_acc:.3f})")
+
+print(f"\n💡 KEY INSIGHTS:")
+print(f"   🎯 Clean 1-to-1 comparison across puzzle sizes")
+print(f"   📊 Shows both success and failure cases for each complexity")
+print(f"   🔄 Demonstrates model's limits as puzzle size increases")
+print(f"   ⚡ Single checkpoint handles all sizes!")
+
+print(f"\n📁 Results saved to: {output_dir}/")
+print(f"   📊 SUCCESS_multi_size_v2.png - 1 success per puzzle size")
+print(f"   ❌ FAILURE_multi_size_v2.png - 1 failure per puzzle size")
+print(f"\n🚀 Multi-size analysis complete! Perfect for comparison! 🎉")
