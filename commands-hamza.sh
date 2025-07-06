@@ -82,3 +82,19 @@ python puzzle_diff/train_script.py \
   --backbone resnet18equiv \
   --architecture transformer \
   --acc_grad 2
+
+# 4090 local machine missing inference
+python puzzle_diff/train_script.py \
+    -dataset celeba \
+    -puzzle_sizes 6 8 10 12 \
+    -batch_size 8 \
+    -gpus 1 \
+    -steps 300 \
+    --rotation True \
+    --degree 100% \
+    --backbone resnet18equiv \
+    --architecture transformer \
+    --evaluate True \
+    --checkpoint_path "Puzzle-Diff/99qcofwy/checkpoints/last.ckpt" \
+    --missing 30 \
+    --save_eval_images True

@@ -978,39 +978,115 @@ class GNN_Diffusion(pl.LightningModule):
                         else:
                             pred_rot = None
                             
+                        try:
+                            fig, ax = plt.subplots(2, 1, figsize=(10, 15))
+
+                            img_plot = self.create_image_from_patches(
+                                patches_rgb,
+                                pred_pos,
+                                n_patches=n_patches,
+                                i=i_name,
+                                rotations=pred_rot,
+                            )
+
+                            ax[0].imshow(img_plot)
+                            ax[0].set_xticks([])
+                            ax[0].set_yticks([])
+
+                            col = list(map(interpolate_color, gt_pos))
+                            
+                            # FIX: Only process rotation visualization if we have rotation data
+
+                            if pred_rot is not None and self.rotation:
+                                pred_rot_norm = F.normalize(pred_rot, dim=-1)
+                                rad_pred = torch.atan2(pred_rot_norm[:, 1], pred_rot_norm[:, 0])
+                                rad_gt = torch.atan2(gt_rot[:, 1], gt_rot[:, 0])
+                                diff_rad = (rad_gt - rad_pred) + math.pi / 2
+                                new_p = torch.stack(
+                                    [torch.cos(diff_rad), torch.sin(diff_rad)], dim=-1
+                                )
+                                ax[1].quiver(
+                                    pred_pos[:, 0].cpu(),
+                                    pred_pos[:, 1].cpu(),
+                                    new_p[:, 0].cpu(),
+                                    new_p[:, 1].cpu(),
+                                    color=col,
+                                    pivot="middle",
+                                    scale=10,
+                                    width=0.01,
+                                )
+                            else:
+                                # For 2D models, just show position scatter plot
+                                ax[1].scatter(pred_pos[:, 0].cpu(), pred_pos[:, 1].cpu(), c=col)
+
+                            ax[1].set_aspect("equal")
+                            ax[1].set_xlim(-1.2, 1.2)
+                            ax[1].set_ylim(-1.2, 1.2)
+                            ax[1].invert_yaxis()
+                            ax[1].set_xticks([])
+                            ax[1].set_yticks([])
+
+                            save_path = f"results/{self.logger.experiment.name}/test/"
+                            save_path = Path(save_path)
+                            save_path.mkdir(parents=True, exist_ok=True)
+                            
+                            step_filename = save_path / f"{i_name}_{id_t:03d}.png"
+                            fig.savefig(step_filename, dpi=300, transparent=True)
+                            plt.close(fig)
+                            
+                        except Exception as e:
+                            plt.close('all')  # Clean up any open figures
+
+                    ###### FINAL IMAGE  ######
+                    # FIX: Only extract rotation for rotation-enabled models
+                    try:
+                        # 🔧 SAFELY get the final result
+                        final_result = imgs[-1][idx]  # Get final step result
+                        final_pos = final_result[:, :2]
+                        
+                        # 🔧 SAFE FINAL ROTATION EXTRACTION
+                        if self.rotation and final_result.size(1) > 2:
+                            final_pred_rot = final_result[:, 2:]
+                            # Snap rotation to 90-degree increments
+                            rad = torch.atan2(final_pred_rot[:, 1], final_pred_rot[:, 0])
+                            rad_snap = torch.round(rad / (torch.pi / 2)) * torch.pi / 2
+                            final_pred_rot = torch.stack(
+                                [torch.cos(rad_snap), torch.sin(rad_snap)], dim=-1
+                            )
+                        else:
+                            final_pred_rot = None
+
+                        # Use grid positions sorted by predicted assignment
+                        final_pred_pos = real_grid[pred_ass[:, 1]]
+
                         fig, ax = plt.subplots(2, 1, figsize=(10, 15))
 
                         img_plot = self.create_image_from_patches(
                             patches_rgb,
-                            pred_pos,
+                            final_pred_pos,
                             n_patches=n_patches,
                             i=i_name,
-                            rotations=pred_rot,
+                            rotations=final_pred_rot,
                         )
 
                         ax[0].imshow(img_plot)
-                        # ax[0].set_axis_off()
                         ax[0].set_xticks([])
                         ax[0].set_yticks([])
-
-                        # ax[0].patch.set_edgecolor("black")
-
-                        # ax[0].patch.set_linewidth("1")
 
                         col = list(map(interpolate_color, gt_pos))
                         
                         # FIX: Only process rotation visualization if we have rotation data
-                        if pred_rot is not None and self.rotation:
-                            pred_rot = F.normalize(pred_rot, dim=-1)
-                            rad_pred = torch.atan2(pred_rot[:, 1], pred_rot[:, 0])
+                        if final_pred_rot is not None and self.rotation:
+                            final_pred_rot_norm = F.normalize(final_pred_rot, dim=-1)
+                            rad_pred = torch.atan2(final_pred_rot_norm[:, 1], final_pred_rot_norm[:, 0])
                             rad_gt = torch.atan2(gt_rot[:, 1], gt_rot[:, 0])
                             diff_rad = (rad_gt - rad_pred) + math.pi / 2
                             new_p = torch.stack(
                                 [torch.cos(diff_rad), torch.sin(diff_rad)], dim=-1
                             )
                             ax[1].quiver(
-                                pred_pos[:, 0].cpu(),
-                                pred_pos[:, 1].cpu(),
+                                final_pred_pos[:, 0].cpu(),
+                                final_pred_pos[:, 1].cpu(),
                                 new_p[:, 0].cpu(),
                                 new_p[:, 1].cpu(),
                                 color=col,
@@ -1020,116 +1096,27 @@ class GNN_Diffusion(pl.LightningModule):
                             )
                         else:
                             # For 2D models, just show position scatter plot
-                            ax[1].scatter(pred_pos[:, 0].cpu(), pred_pos[:, 1].cpu(), c=col)
+                            ax[1].scatter(final_pred_pos[:, 0].cpu(), final_pred_pos[:, 1].cpu(), c=col)
 
                         ax[1].set_aspect("equal")
-                        # ax[1].set_axis_off()
                         ax[1].set_xlim(-1.2, 1.2)
                         ax[1].set_ylim(-1.2, 1.2)
-
                         ax[1].invert_yaxis()
-                        # ax[1].patch.set_edgecolor("black")
-
-                        # ax[1].patch.set_linewidth("1")
-
                         ax[1].set_xticks([])
                         ax[1].set_yticks([])
 
                         save_path = f"results/{self.logger.experiment.name}/test/"
                         save_path = Path(save_path)
                         save_path.mkdir(parents=True, exist_ok=True)
-                        fig.savefig(
-                            save_path / f"{i_name}_{id_t:03d}.png",
-                            dpi=300,
-                            transparent=True,
-                        )
+                        final_filename = save_path / f"{i_name}_final.png"
+                        fig.savefig(final_filename, dpi=300, transparent=True)
                         plt.close(fig)
-
-                    ###### FINAL IMAGE ######
-                    
-                    # FIX: Only extract rotation for rotation-enabled models
-                    if self.rotation and t_res.size(1) > 2:
-                        pred_rot = t_res[:, 2:]
-                        # snap the rotation to one of the four 90 degree rotations
-                        rad = torch.atan2(pred_rot[:, 1], pred_rot[:, 0])
-                        rad_snap = torch.round(rad / (torch.pi / 2)) * torch.pi / 2
-                        pred_rot = torch.stack(
-                            [torch.cos(rad_snap), torch.sin(rad_snap)], dim=-1
-                        )
-                    else:
-                        pred_rot = None
-
-                    # for the final image use the gt pos, sorted by the predicted assignement
-                    pred_pos = real_grid[pred_ass[:, 1]]
-
-                    fig, ax = plt.subplots(2, 1, figsize=(10, 15))
-
-                    img_plot = self.create_image_from_patches(
-                        patches_rgb,
-                        pred_pos,
-                        n_patches=n_patches,
-                        i=i_name,
-                        rotations=pred_rot,
-                    )
-
-                    ax[0].imshow(img_plot)
-                    # ax[0].set_axis_off()
-                    ax[0].set_xticks([])
-                    ax[0].set_yticks([])
-
-                    # ax[0].patch.set_edgecolor("black")
-
-                    # ax[0].patch.set_linewidth("1")
-
-                    col = list(map(interpolate_color, gt_pos))
-                    
-                    # FIX: Only process rotation visualization if we have rotation data
-                    if pred_rot is not None and self.rotation:
-                        pred_rot = F.normalize(pred_rot, dim=-1)
-                        rad_pred = torch.atan2(pred_rot[:, 1], pred_rot[:, 0])
-                        rad_gt = torch.atan2(gt_rot[:, 1], gt_rot[:, 0])
-                        diff_rad = (rad_gt - rad_pred) + math.pi / 2
-                        new_p = torch.stack(
-                            [torch.cos(diff_rad), torch.sin(diff_rad)], dim=-1
-                        )
-                        ax[1].quiver(
-                            pred_pos[:, 0].cpu(),
-                            pred_pos[:, 1].cpu(),
-                            new_p[:, 0].cpu(),
-                            new_p[:, 1].cpu(),
-                            color=col,
-                            pivot="middle",
-                            scale=10,
-                            width=0.01,
-                        )
-                    else:
-                        # For 2D models, just show position scatter plot
-                        ax[1].scatter(pred_pos[:, 0].cpu(), pred_pos[:, 1].cpu(), c=col)
-
-                    ax[1].set_aspect("equal")
-                    # ax[1].set_axis_off()
-                    ax[1].set_xlim(-1.2, 1.2)
-                    ax[1].set_ylim(-1.2, 1.2)
-
-                    ax[1].invert_yaxis()
-                    # ax[1].patch.set_edgecolor("black")
-
-                    # ax[1].patch.set_linewidth("1")
-
-                    ax[1].set_xticks([])
-                    ax[1].set_yticks([])
-
-                    save_path = f"results/{self.logger.experiment.name}/test/"
-                    save_path = Path(save_path)
-                    save_path.mkdir(parents=True, exist_ok=True)
-                    fig.savefig(
-                        save_path / f"{i_name}_final.png",
-                        dpi=300,
-                        transparent=True,
-                    )
-                    plt.close(fig)
-
-                    #######################
+                        
+                        print(f"🏆 Final image saved: {final_filename}")
+                        
+                    except Exception as e:
+                        print(f"❌ Error creating final image: {e}")
+                        plt.close('all')
 
                 self.metrics[f"{tuple(n_patches)}_nImages"].update(1)
                 self.metrics["overall_nImages"].update(1)
