@@ -9,7 +9,7 @@ dataset_old_delete/
 wandb/
 singularity/*.o*
 .ipynb_checkpoints
-
+failed_puzzles.log
 
 singularity/*.o*
 exploration_analysis
