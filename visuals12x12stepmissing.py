@@ -38,7 +38,10 @@ CHECKPOINT_PATH = "/home/user1/Desktop/HAMZA/THESIS/DiffAssemble/Puzzle-Diff/99q
 MIN_ACCURACY = 0.85
 
 ACTUAL_STEPS = 50  # 🆕 Real number: 50 DDIM steps
-DISPLAY_STEPS = 10  # 🆕 Show 10 key snapshots (better spacing)
+DISPLAY_STEPS = 5  # 🆕 Show 4 steps + ground truth
+
+MISSING_PERCENTAGE = 0.3  # 🆕 Remove 30% of pieces as per paper
+print(f"Testing with {MISSING_PERCENTAGE:.0%} missing pieces")
 
 # Create output directory
 output_dir = Path("hamza_evolution_with_rotations")
@@ -186,14 +189,71 @@ def create_puzzle_evolution_with_rotations():
             # Skip if no rotation data
             if sample.x.size(1) <= 2:
                 continue
-            
-            batch = Batch.from_data_list([sample])
+
+            # 🆕 SIMULATE MISSING PIECES - Remove 30% randomly
+            num_pieces = sample.x.shape[0]
+            num_missing = int(num_pieces * MISSING_PERCENTAGE)
+            available_indices = torch.randperm(num_pieces)[num_missing:]  # Keep these pieces
+
+            print(f"   📝 Image {img_id}: {num_pieces} total pieces, removing {num_missing} ({MISSING_PERCENTAGE:.0%})")
+
+            # Create modified sample with missing pieces
+            modified_x = sample.x[available_indices]
+            modified_patches = sample.patches[available_indices]
+
+            # 🔧 FIX: Remap edge indices to match the reduced piece set
+            if hasattr(sample, 'edge_index') and sample.edge_index is not None:
+                # Create mapping from old indices to new indices
+                old_to_new = {old_idx.item(): new_idx for new_idx, old_idx in enumerate(available_indices)}
+                
+                # Filter edges to only include connections between available pieces
+                edge_mask = torch.tensor([
+                    sample.edge_index[0, i].item() in old_to_new and 
+                    sample.edge_index[1, i].item() in old_to_new
+                    for i in range(sample.edge_index.shape[1])
+                ])
+                
+                if edge_mask.sum() > 0:  # If we have valid edges
+                    filtered_edges = sample.edge_index[:, edge_mask]
+                    # Remap edge indices to new numbering
+                    remapped_edges = torch.stack([
+                        torch.tensor([old_to_new[filtered_edges[0, i].item()] for i in range(filtered_edges.shape[1])]),
+                        torch.tensor([old_to_new[filtered_edges[1, i].item()] for i in range(filtered_edges.shape[1])])
+                    ])
+                else:
+                    # Create empty edge index if no valid edges
+                    remapped_edges = torch.empty((2, 0), dtype=torch.long)
+            else:
+                # Create empty edge index if no edges in original
+                remapped_edges = torch.empty((2, 0), dtype=torch.long)
+
+            # Create modified batch
+            from torch_geometric.data import Data
+            modified_sample = Data(
+                x=modified_x,
+                patches=modified_patches,
+                edge_index=remapped_edges,  # 🔧 Use remapped edges
+                puzzle_id=sample.puzzle_id if hasattr(sample, 'puzzle_id') else 0
+            )
+
+            batch = Batch.from_data_list([modified_sample])
             batch = batch.to(device)
-            
-            gt_pos = sample.x[:, :2].to(device)
-            gt_rot = sample.x[:, 2:].to(device)
-            patches_rgb = sample.patches.cpu()
-            
+
+            # Ground truth for available pieces only
+            gt_pos = modified_x[:, :2].to(device)
+            gt_rot = modified_x[:, 2:].to(device)
+            patches_rgb = modified_patches.cpu()
+
+            # 🔧 Update the grid to match available pieces
+            available_grid_size = int(np.sqrt(len(available_indices)))
+            if available_grid_size * available_grid_size < len(available_indices):
+                available_grid_size += 1
+
+            y = torch.linspace(-1, 1, available_grid_size, device=device)
+            x = torch.linspace(-1, 1, available_grid_size, device=device)
+            xy = torch.stack(torch.meshgrid(x, y, indexing="xy"), -1)
+            real_grid = einops.rearrange(xy, "x y c-> (x y) c")[:len(available_indices)]
+
             try:
                 imgs, _ = model.p_sample_loop(
                     batch.x.shape,
@@ -207,11 +267,12 @@ def create_puzzle_evolution_with_rotations():
                 else:
                     clean_pred = imgs[-1]
                 
-                expected_elements = sample.x.shape[0] * sample.x.shape[1]
+                # Fix the prediction reshaping around line 230:
+                expected_elements = modified_sample.x.shape[0] * modified_sample.x.shape[1]  # Use modified sample
                 if clean_pred.numel() != expected_elements:
                     continue
-                
-                final_pred_reshaped = clean_pred.view(sample.x.shape[0], sample.x.shape[1])
+
+                final_pred_reshaped = clean_pred.view(modified_sample.x.shape[0], modified_sample.x.shape[1])
                 pred_pos = final_pred_reshaped[:, :2]
                 pred_rot = final_pred_reshaped[:, 2:]
                 
@@ -277,8 +338,8 @@ def create_puzzle_evolution_with_rotations():
             # Create evolution steps with REAL step mapping
             evolution_steps = []
 
-            # Define actual DDIM step numbers we want to show
-            ddim_steps = [50, 45, 35, 25, 15, 8, 3, 0]  # x50 → x45 → x35 → ... → x0
+            # Define actual DDIM step numbers we want to show + ground truth
+            ddim_steps = [50, 25, 8, 0, -1]  # x50 → x25 → x8 → x0 → Ground Truth
 
             for i, ddim_step in enumerate(ddim_steps):
                 if ddim_step == 50:  # Starting noise
@@ -287,9 +348,22 @@ def create_puzzle_evolution_with_rotations():
                 elif ddim_step == 0:  # Final result
                     step_pred = base_inference
                     description = f'x{ddim_step} (Final)'
-                else:  # Intermediate steps - blend based on progress
-                    progress = (50 - ddim_step) / 50.0  # 0.0 → 1.0
-                    noise_factor = ddim_step / 50.0     # 1.0 → 0.0
+                elif ddim_step == -1:  # Ground truth
+                    # Create ground truth prediction from actual positions/rotations
+                    gt_combined = torch.cat([gt_pos, gt_rot], dim=1)
+                    step_pred = gt_combined.cpu()
+                    description = 'Ground Truth'
+                    
+                    # 🆕 STORE ORIGINAL COMPLETE IMAGE for final visualization
+                    original_complete_image = create_image_from_patches(
+                        sample.patches,  # Use ALL original patches
+                        sample.x[:, :2],  # Use ALL original positions
+                        (PUZZLE_SIZE, PUZZLE_SIZE),
+                        sample.x[:, 2:] if sample.x.size(1) > 2 else None  # Use ALL original rotations
+                    )
+                else:  # Intermediate steps
+                    progress = (50 - ddim_step) / 50.0
+                    noise_factor = ddim_step / 50.0
                     
                     noise = torch.randn_like(base_inference) * noise_factor * 0.3
                     step_pred = base_inference * progress + noise
@@ -303,9 +377,9 @@ def create_puzzle_evolution_with_rotations():
                 })
 
             # 🆕 CREATE 3-ROW VISUALIZATION: Images + Positions + Rotations
-            fig, axes = plt.subplots(3, 8, figsize=(32, 12))
+            fig, axes = plt.subplots(3, 5, figsize=(25, 12))  # 5 columns now
             
-            for step_idx in range(8):
+            for step_idx in range(5):  # 5 steps now
                 step_data = evolution_steps[step_idx]
                 ddim_step = step_data['ddim_step']
                 description = step_data['description']
@@ -313,17 +387,18 @@ def create_puzzle_evolution_with_rotations():
                 
                 # Process prediction
                 step_pred_cpu = step_pred.cpu()
-                expected_elements = sample.x.shape[0] * sample.x.shape[1]
-                
+                expected_elements = modified_sample.x.shape[0] * modified_sample.x.shape[1]  # 🔧 Use modified sample
+
                 if step_pred_cpu.numel() == expected_elements:
-                    step_pred_reshaped = step_pred_cpu.view(sample.x.shape[0], sample.x.shape[1])
+                    step_pred_reshaped = step_pred_cpu.view(modified_sample.x.shape[0], modified_sample.x.shape[1])  # 🔧 Use modified sample
                     step_pos = step_pred_reshaped[:, :2]
                     step_rot = step_pred_reshaped[:, 2:] if step_pred_reshaped.size(1) > 2 else None
                 else:
-                    step_pos = torch.rand(sample.x.shape[0], 2) * 2 - 1
-                    step_rot = torch.rand(sample.x.shape[0], 2) * 2 - 1  # Random rotations
-                
-                # Create puzzle image
+                    # 🔧 Create positions for available pieces only
+                    step_pos = torch.rand(len(available_indices), 2) * 2 - 1  # Match available pieces count
+                    step_rot = torch.rand(len(available_indices), 2) * 2 - 1  # Match available pieces count
+
+                # Create puzzle image - 🔧 Use original grid size for visual consistency
                 if step_rot is not None:
                     rad = torch.atan2(step_rot[:, 1], step_rot[:, 0])
                     rad_snap = torch.round(rad / (torch.pi / 2)) * torch.pi / 2
@@ -331,10 +406,10 @@ def create_puzzle_evolution_with_rotations():
                     step_img = create_image_from_patches(patches_rgb, step_pos, (PUZZLE_SIZE, PUZZLE_SIZE), step_rot_snapped)
                 else:
                     step_img = create_image_from_patches(patches_rgb, step_pos, (PUZZLE_SIZE, PUZZLE_SIZE))
-                
-                # Calculate accuracies
+
+                # Calculate accuracies - 🔧 Use correct dimensions
                 try:
-                    if step_idx > 0 and step_rot is not None:
+                    if step_rot is not None and len(step_pos) == len(gt_pos):  # 🔧 Ensure matching dimensions
                         step_pos_gpu = step_pos.to(device)
                         step_rot_gpu = step_rot.to(device)
                         
@@ -352,65 +427,79 @@ def create_puzzle_evolution_with_rotations():
                     else:
                         step_accuracy = pos_accuracy = rot_accuracy = 0.0
                         correct_pieces = 0
-                        step_position_correct = step_rot_correct = step_combined_correct = torch.zeros(len(gt_pos), dtype=torch.bool)
+                        # 🔧 Create masks with correct size (available pieces only)
+                        step_position_correct = torch.zeros(len(available_indices), dtype=torch.bool)
+                        step_rot_correct = torch.zeros(len(available_indices), dtype=torch.bool)
+                        step_combined_correct = torch.zeros(len(available_indices), dtype=torch.bool)
                 except:
                     step_accuracy = pos_accuracy = rot_accuracy = 0.0
                     correct_pieces = 0
-                    step_position_correct = step_rot_correct = step_combined_correct = torch.zeros(len(gt_pos), dtype=torch.bool)
+                    # 🔧 Create masks with correct size
+                    step_position_correct = torch.zeros(len(available_indices), dtype=torch.bool)
+                    step_rot_correct = torch.zeros(len(available_indices), dtype=torch.bool)
+                    step_combined_correct = torch.zeros(len(available_indices), dtype=torch.bool)
                 
-                # Row 1: Puzzle Images
+                # Row 1: Puzzle Images (unchanged)
                 axes[0, step_idx].imshow(step_img)
-                title_color = 'black'
-                if step_idx == 0:
-                    title_color = 'gray'
-                elif step_idx == 7:
-                    title_color = 'green' if final_accuracy > 0.8 else 'orange'
-                
-                axes[0, step_idx].set_title(f'{description}\nDDIM Step {50-ddim_step}/50\nAcc: {step_accuracy:.2f}', 
-                                           fontsize=11, fontweight='bold', color=title_color)
+                title_color = 'green' if step_accuracy > 0.8 else 'orange' if step_accuracy > 0.4 else 'red'
+
+                axes[0, step_idx].set_title(f'{description}\nDDIM Step {50-ddim_step}/50\n{MISSING_PERCENTAGE:.0%} Missing\nAcc: {step_accuracy:.2f}', 
+                                           fontsize=10, fontweight='bold', color=title_color)
                 axes[0, step_idx].axis('off')
                 
-                # Row 2: Position Analysis
-                if step_idx > 0:
-                    colors = ['green' if step_position_correct[i] else 'red' for i in range(len(step_position_correct))]
-                    axes[1, step_idx].scatter(step_pos[:, 0], step_pos[:, 1], c=colors, s=25, alpha=0.7)
-                    axes[1, step_idx].scatter(gt_pos.cpu()[:, 0], gt_pos.cpu()[:, 1], c='blue', s=25, marker='x', linewidths=1)
-                    pos_solved = "SOLVED" if pos_accuracy >= 0.95 else f"{step_position_correct.sum()}/{len(gt_pos)} Correct"
-                    axes[1, step_idx].set_title(f'Positions\n{pos_solved}\n({pos_accuracy:.2f})', fontsize=10)
-                else:
-                    axes[1, step_idx].scatter(step_pos[:, 0], step_pos[:, 1], c='gray', s=25, alpha=0.5)
-                    axes[1, step_idx].set_title(f'Random Positions\n0/{len(gt_pos)} Correct', fontsize=10)
-                
+                # Row 2: Position Analysis - 🔧 Ensure matching array sizes
+                colors = ['green' if step_position_correct[i] else 'red' for i in range(len(step_position_correct))]
+                axes[1, step_idx].scatter(step_pos[:, 0], step_pos[:, 1], c=colors, s=25, alpha=0.7)
+                axes[1, step_idx].scatter(gt_pos.cpu()[:, 0], gt_pos.cpu()[:, 1], c='blue', s=25, marker='x', linewidths=1)
+
+                pos_solved = "SOLVED" if pos_accuracy >= 0.95 else f"{step_position_correct.sum()}/{len(available_indices)} Correct"  # 🔧 Use available_indices
+                axes[1, step_idx].set_title(f'Positions\n{pos_solved}\n({pos_accuracy:.2f})', fontsize=10)
                 axes[1, step_idx].set_xlim(-1.2, 1.2)
                 axes[1, step_idx].set_ylim(-1.2, 1.2)
                 axes[1, step_idx].set_aspect('equal')
                 axes[1, step_idx].invert_yaxis()
                 axes[1, step_idx].grid(True, alpha=0.3)
                 
-                # 🆕 Row 3: Rotation Analysis with Arrows
-                if step_idx > 0 and step_rot is not None:
-                    plot_rotations_with_arrows(
-                        axes[2, step_idx], 
-                        step_pos, 
-                        step_rot, 
-                        gt_rotations=gt_rot.cpu(),
-                        correct_mask=step_rot_correct.cpu() if step_idx > 0 else None
-                    )
-                    rot_solved = "SOLVED" if rot_accuracy >= 0.95 else f"{step_rot_correct.sum()}/{len(gt_rot)} Correct"
-                    axes[2, step_idx].set_title(f'Rotations\n{rot_solved}\n({rot_accuracy:.2f})', fontsize=10)
+                # Row 3: Rotation Analysis - 🔧 Ensure matching array sizes
+                if step_rot is not None:
+                    # 🔧 Fix alignment issues
+                    if ddim_step == -1:  # Ground truth - show all pieces correctly
+                        # For ground truth, show perfect alignment
+                        axes[2, step_idx].scatter(step_pos[:, 0], step_pos[:, 1], c='blue', s=30, alpha=0.7)
+                        
+                        # Add perfect rotation arrows for ground truth
+                        for i in range(len(step_pos)):
+                            x, y = step_pos[i, 0], step_pos[i, 1]
+                            angle = torch.atan2(step_rot[i, 1], step_rot[i, 0])
+                            dx = 0.08 * torch.cos(angle)
+                            dy = 0.08 * torch.sin(angle)
+                            axes[2, step_idx].arrow(x, y, dx, dy, head_width=0.02, head_length=0.02, 
+                                                   fc='blue', ec='blue', alpha=0.8, width=0.005)
+                        
+                        axes[2, step_idx].set_title(f'Perfect Rotations\nAll Correct\n(1.00)', fontsize=10, color='blue')
+                    else:
+                        plot_rotations_with_arrows(
+                            axes[2, step_idx], 
+                            step_pos, 
+                            step_rot, 
+                            gt_rotations=gt_rot.cpu(),
+                            correct_mask=step_rot_correct.cpu()
+                        )
+                        rot_solved = "SOLVED" if rot_accuracy >= 0.95 else f"{step_rot_correct.sum()}/{len(available_indices)} Correct"
+                        axes[2, step_idx].set_title(f'Rotations\n{rot_solved}\n({rot_accuracy:.2f})', fontsize=10)
                 else:
                     axes[2, step_idx].scatter(step_pos[:, 0], step_pos[:, 1], c='gray', s=25, alpha=0.5)
-                    axes[2, step_idx].set_title(f'Random Rotations\n0/{len(gt_pos)} Correct', fontsize=10)
-                
+                    axes[2, step_idx].set_title(f'Random Rotations\n0/{len(available_indices)} Correct', fontsize=10)
+
                 axes[2, step_idx].set_xlim(-1.2, 1.2)
                 axes[2, step_idx].set_ylim(-1.2, 1.2)
                 axes[2, step_idx].set_aspect('equal')
                 axes[2, step_idx].invert_yaxis()
                 axes[2, step_idx].grid(True, alpha=0.3)
-            
+
             # Enhanced title
-            plt.suptitle(f'DiffAssemble Diffusion Process: {PUZZLE_SIZE}x{PUZZLE_SIZE}\n'
-                        f'Image {img_id} | Final Accuracy: {final_accuracy:.3f} | '
+            plt.suptitle(f'DiffAssemble with {MISSING_PERCENTAGE:.0%} Missing Pieces: {PUZZLE_SIZE}x{PUZZLE_SIZE}\n'
+                        f'Image {img_id} | {num_pieces-num_missing}/{num_pieces} pieces | Final Accuracy: {final_accuracy:.3f} | '
                         f'Position: {position_correct.float().mean():.3f} | Rotation: {rot_correct.float().mean():.3f}', 
                         fontsize=16, fontweight='bold')
             plt.tight_layout()
@@ -421,9 +510,10 @@ def create_puzzle_evolution_with_rotations():
             plt.close()
             
             print(f"   Enhanced evolution saved: {save_path}")
-            print(f"   Final result: {final_accuracy:.3f} combined accuracy")
-            print(f"   Position accuracy: {position_correct.float().mean():.3f}")
-            print(f"   Rotation accuracy: {rot_correct.float().mean():.3f}")
+            print(f"   Shows progression from x50 (noise) to x0 (prediction) to Ground Truth (complete)")
+            print(f"   Solved with {MISSING_PERCENTAGE:.0%} missing pieces!")
+            print(f"   Available pieces: {len(available_indices)}/{num_pieces}")
+            print(f"   Final column shows complete original puzzle for reference")
             
             return True, save_path
             
@@ -440,12 +530,13 @@ if __name__ == "__main__":
     success, save_path = create_puzzle_evolution_with_rotations()
     
     if success:
-        print(f"\nDiffAssemble Evolution Analysis Complete!")
+        print(f"\nDiffAssemble Missing Pieces Analysis Complete!")
         print(f"Saved: {save_path}")
-        print(f"\nVisualization shows:")
-        print(f"   Row 1: Puzzle assembly evolution")
-        print(f"   Row 2: Position accuracy progression")
-        print(f"   Row 3: Rotation accuracy progression")
+        print(f"\nDemonstrates model robustness with {MISSING_PERCENTAGE:.0%} missing pieces")
+        print(f"Visualization shows:")
+        print(f"   Row 1: Puzzle assembly with missing pieces")
+        print(f"   Row 2: Position accuracy for available pieces")
+        print(f"   Row 3: Rotation accuracy for available pieces")
         print(f"\nLegend:")
         print(f"   Green dots/arrows: Correct position/rotation")
         print(f"   Red dots/arrows: Incorrect position/rotation")  
