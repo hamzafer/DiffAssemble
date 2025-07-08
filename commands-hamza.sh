@@ -129,3 +129,17 @@ python puzzle_diff/train_script.py \
     --checkpoint_path "Puzzle-Diff/99qcofwy/checkpoints/last.ckpt" \
     --missing 30 \
     --save_eval_images True
+
+# 4090 local machine imagenet 4x4
+python puzzle_diff/train_script.py \
+    -dataset imagenet \
+    -puzzle_sizes 4 \
+    -batch_size 8 \
+    -gpus 1 \
+    -steps 300 \
+    --degree 100% \
+    --architecture transformer \
+    --evaluate True \
+    --checkpoint_path "Puzzle-Diff/8fuyrpvq/checkpoints/last.ckpt" \
+    --save_eval_images True \
+    --offline
