@@ -1,0 +1,15 @@
+ImageNet 4x4 Puzzle Evaluation Summary
+============================================================
+Timestamp: 20250707_222949
+Checkpoint: /home/user1/Desktop/HAMZA/THESIS/DiffAssemble/Puzzle-Diff/8fuyrpvq/checkpoints/last.ckpt
+Dataset: imagenet
+Puzzle size: 4x4
+Success threshold: 80.0%
+Full test set: True
+
+Results:
+Total samples evaluated: 50000
+Average piece accuracy: 0.9468
+Perfect puzzles: 43655/50000 (0.8731)
+Success rate: 45843/50000 (0.9169)
+Failure rate: 4157/50000 (0.0831)
