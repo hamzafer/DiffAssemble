@@ -4,6 +4,7 @@ from torchvision.datasets import CIFAR100, ImageNet
 
 from .breakingbad_dt import GeometryPartDataset
 from .celeba_dt import CelebA_HQ
+from .jpwleg3_dt import JPwLEG3_DT  # Add this import
 from .nips_dt import Nips_dt
 from .objects_dataset import Objects_Dataset
 from .puzzle_dataset import (
@@ -22,7 +23,7 @@ from .vist_dataset import Vist_dataset
 from .wiki_dt import Wiki_dt
 from .wikiart_dt import Wikiart_DT
 
-ALLOWED_DT = ["celeba", "cifar100", "wikiart", "imagenet"]
+ALLOWED_DT = ["celeba", "cifar100", "wikiart", "imagenet", "jpwleg3"]  # Add jpwleg3 here
 ALLOWED_TEXT = ["nips", "sind", "roc", "wiki"]
 
 
@@ -38,7 +39,7 @@ def get_dataset(
     Get dataset of images based on specified dataset name and puzzle sizes.
 
     Parameters:
-    - dataset (str): The name of the dataset to be used (e.g., "celeba", "cifar100", "wikiart").
+    - dataset (str): The name of the dataset to be used (e.g., "celeba", "cifar100", "wikiart", "jpwleg3").
     - puzzle_sizes (list): A list of puzzle sizes to be used.
 
     - degree (int): Degree of the graph. If -1 use FC graph
@@ -76,6 +77,9 @@ def get_dataset(
     elif dataset == "imagenet":
         train_dt = ImageNet("./datasets/imagenet2012", split="train")
         test_dt = ImageNet("./datasets/imagenet2012", split="val")
+    elif dataset == "jpwleg3":  # Add this case
+        train_dt = JPwLEG3_DT(train=True)
+        test_dt = JPwLEG3_DT(train=False)
     else:
         raise Exception("Not supported")
 
@@ -111,7 +115,7 @@ def get_dataset_missing_pieces(
     Get dataset of images based on specified dataset name and puzzle sizes.
 
     Parameters:
-    - dataset (str): The name of the dataset to be used (e.g., "celeba", "cifar100", "wikiart").
+    - dataset (str): The name of the dataset to be used (e.g., "celeba", "cifar100", "wikiart", "jpwleg3").
     - puzzle_sizes (list): A list of puzzle sizes to be used.
 
     Returns:
@@ -142,6 +146,11 @@ def get_dataset_missing_pieces(
     elif dataset == "wikiart":
         train_dt = Wikiart_DT(train=True)
         test_dt = Wikiart_DT(train=False)
+    elif dataset == "jpwleg3":  # Add this case
+        train_dt = JPwLEG3_DT(train=True)
+        test_dt = JPwLEG3_DT(train=False)
+    else:
+        raise Exception("Not supported")
 
     # Create puzzle datasets using the loaded datasets
     puzzleDt_train = Puzzle_Dataset_MP(
@@ -177,7 +186,7 @@ def get_dataset_ROT(
     Get dataset of images based on specified dataset name and puzzle sizes.
 
     Parameters:
-    - dataset (str): The name of the dataset to be used (e.g., "celeba", "cifar100", "wikiart").
+    - dataset (str): The name of the dataset to be used (e.g., "celeba", "cifar100", "wikiart", "jpwleg3").
     - puzzle_sizes (list): A list of puzzle sizes to be used.
     - degree (int): Degree of the graph. If -1 use FC graph
     - unique_graph (boolean): Defines the strategy used to create the topology of the graph. If it is false, each sample is associated with a random graph topology.
@@ -214,9 +223,12 @@ def get_dataset_ROT(
     elif dataset == "imagenet":
         train_dt = ImageNet("./datasets/imagenet2012", split="train")
         test_dt = ImageNet("./datasets/imagenet2012", split="val")
-
+    elif dataset == "jpwleg3":  # Add this case
+        train_dt = JPwLEG3_DT(train=True)
+        test_dt = JPwLEG3_DT(train=False)
     else:
         raise Exception("Dataset not supported")
+    
     # set a seed in case we want a topology depending only on the size of the graph
     rng = np.random.randint(1, 123456) if unique_graph else None
 
@@ -271,7 +283,7 @@ def get_dataset_padding(
     Get dataset of images based on specified dataset name and puzzle sizes.
 
     Parameters:
-    - dataset (str): The name of the dataset to be used (e.g., "celeba", "cifar100", "wikiart").
+    - dataset (str): The name of the dataset to be used (e.g., "celeba", "cifar100", "wikiart", "jpwleg3").
     - puzzle_sizes (list): A list of puzzle sizes to be used.
 
     - degree (int): Degree of the graph. If -1 use FC graph
@@ -305,6 +317,9 @@ def get_dataset_padding(
     elif dataset == "wikiart":
         train_dt = Wikiart_DT(train=True)
         test_dt = Wikiart_DT(train=False)
+    elif dataset == "jpwleg3":  # Add this case
+        train_dt = JPwLEG3_DT(train=True)
+        test_dt = JPwLEG3_DT(train=False)
 
     # Create puzzle datasets using the loaded datasets
     puzzleDt_train = Puzzle_Dataset_Pad(

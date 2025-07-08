@@ -14,6 +14,21 @@ python puzzle_diff/train_script.py \
   --backbone resnet18equiv \
   --architecture transformer
 
+# ("-num_workers", type=int, default=8)
+# Train to reproduce - ak
+python puzzle_diff/train_script.py \
+  -dataset jpwleg3 \
+  -puzzle_sizes 6 \
+  -batch_size 16 \
+  -gpus 2 \
+  -steps 300 \
+  -sampling DDIM \
+  -inference_ratio 10 \
+  --rotation True \
+  --degree 100% \
+  --backbone resnet18equiv \
+  --architecture transformer
+
 # Train to reproduce imagenet
 python puzzle_diff/train_script.py \
   -dataset imagenet \
@@ -43,6 +58,22 @@ CUDA_VISIBLE_DEVICES="" python puzzle_diff/train_script_cpu.py \
     --architecture transformer \
     --evaluate True \
     --checkpoint_path "Puzzle-Diff/99qcofwy/checkpoints/last.ckpt"
+
+python puzzle_diff/train_script.py \
+  -dataset jpwleg3 \
+  -puzzle_sizes 6 \
+  -batch_size 16 \
+  -gpus 2 \
+  -steps 300 \
+  -sampling DDIM \
+  -inference_ratio 10 \
+  --rotation True \
+  --degree 100% \
+  --backbone resnet18equiv \
+  --architecture transformer \
+  --evaluate True \
+  --offline \
+  --checkpoint_path /cluster/home/akmarala/DiffAssemble/Puzzle-Diff/jk8jhzia/checkpoints/last.ckpt
 
 #SETUP (if you want to start from scratch)
 conda env remove --prefix /cluster/home/akmarala/envs/diffassemble
