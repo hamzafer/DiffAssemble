@@ -22,8 +22,9 @@ from .text_dataset import Text_dataset
 from .vist_dataset import Vist_dataset
 from .wiki_dt import Wiki_dt
 from .wikiart_dt import Wikiart_DT
+from .texmet_dt import TEXMET_DT  # Add this import
 
-ALLOWED_DT = ["celeba", "cifar100", "wikiart", "imagenet", "jpwleg3"]  # Add jpwleg3 here
+ALLOWED_DT = ["celeba", "cifar100", "wikiart", "imagenet", "jpwleg3", "texmet"]  # Add texmet here
 ALLOWED_TEXT = ["nips", "sind", "roc", "wiki"]
 
 
@@ -39,7 +40,7 @@ def get_dataset(
     Get dataset of images based on specified dataset name and puzzle sizes.
 
     Parameters:
-    - dataset (str): The name of the dataset to be used (e.g., "celeba", "cifar100", "wikiart", "jpwleg3").
+    - dataset (str): The name of the dataset to be used (e.g., "celeba", "cifar100", "wikiart", "jpwleg3", "texmet").
     - puzzle_sizes (list): A list of puzzle sizes to be used.
 
     - degree (int): Degree of the graph. If -1 use FC graph
@@ -80,6 +81,9 @@ def get_dataset(
     elif dataset == "jpwleg3":  # Add this case
         train_dt = JPwLEG3_DT(train=True)
         test_dt = JPwLEG3_DT(train=False)
+    elif dataset == "texmet":  # Add this case
+        train_dt = TEXMET_DT(train=True)
+        test_dt = TEXMET_DT(train=False)
     else:
         raise Exception("Not supported")
 
@@ -115,7 +119,7 @@ def get_dataset_missing_pieces(
     Get dataset of images based on specified dataset name and puzzle sizes.
 
     Parameters:
-    - dataset (str): The name of the dataset to be used (e.g., "celeba", "cifar100", "wikiart", "jpwleg3").
+    - dataset (str): The name of the dataset to be used (e.g., "celeba", "cifar100", "wikiart", "jpwleg3", "texmet").
     - puzzle_sizes (list): A list of puzzle sizes to be used.
 
     Returns:
@@ -149,6 +153,9 @@ def get_dataset_missing_pieces(
     elif dataset == "jpwleg3":  # Add this case
         train_dt = JPwLEG3_DT(train=True)
         test_dt = JPwLEG3_DT(train=False)
+    elif dataset == "texmet":  # Add this case
+        train_dt = TEXMET_DT(train=True)
+        test_dt = TEXMET_DT(train=False)
     else:
         raise Exception("Not supported")
 
@@ -186,7 +193,7 @@ def get_dataset_ROT(
     Get dataset of images based on specified dataset name and puzzle sizes.
 
     Parameters:
-    - dataset (str): The name of the dataset to be used (e.g., "celeba", "cifar100", "wikiart", "jpwleg3").
+    - dataset (str): The name of the dataset to be used (e.g., "celeba", "cifar100", "wikiart", "jpwleg3", "texmet").
     - puzzle_sizes (list): A list of puzzle sizes to be used.
     - degree (int): Degree of the graph. If -1 use FC graph
     - unique_graph (boolean): Defines the strategy used to create the topology of the graph. If it is false, each sample is associated with a random graph topology.
@@ -223,9 +230,12 @@ def get_dataset_ROT(
     elif dataset == "imagenet":
         train_dt = ImageNet("./datasets/imagenet2012", split="train")
         test_dt = ImageNet("./datasets/imagenet2012", split="val")
-    elif dataset == "jpwleg3":  # Add this case
+    elif dataset == "jpwleg3":
         train_dt = JPwLEG3_DT(train=True)
         test_dt = JPwLEG3_DT(train=False)
+    elif dataset == "texmet":  # Add this case
+        train_dt = TEXMET_DT(train=True)
+        test_dt = TEXMET_DT(train=False)
     else:
         raise Exception("Dataset not supported")
     
@@ -283,7 +293,7 @@ def get_dataset_padding(
     Get dataset of images based on specified dataset name and puzzle sizes.
 
     Parameters:
-    - dataset (str): The name of the dataset to be used (e.g., "celeba", "cifar100", "wikiart", "jpwleg3").
+    - dataset (str): The name of the dataset to be used (e.g., "celeba", "cifar100", "wikiart", "jpwleg3", "texmet").
     - puzzle_sizes (list): A list of puzzle sizes to be used.
 
     - degree (int): Degree of the graph. If -1 use FC graph
@@ -320,6 +330,9 @@ def get_dataset_padding(
     elif dataset == "jpwleg3":  # Add this case
         train_dt = JPwLEG3_DT(train=True)
         test_dt = JPwLEG3_DT(train=False)
+    elif dataset == "texmet":  # Add this case
+        train_dt = TEXMET_DT(train=True)
+        test_dt = TEXMET_DT(train=False)
 
     # Create puzzle datasets using the loaded datasets
     puzzleDt_train = Puzzle_Dataset_Pad(

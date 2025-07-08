@@ -143,3 +143,13 @@ python puzzle_diff/train_script.py \
     --checkpoint_path "Puzzle-Diff/8fuyrpvq/checkpoints/last.ckpt" \
     --save_eval_images True \
     --offline
+
+# 4090 local machine texmet
+python puzzle_diff/train_script.py \
+    -dataset texmet \
+    -puzzle_sizes 6 \
+    -batch_size 8 \
+    -gpus 1 \
+    -steps 300 \
+    --degree 100% \
+    --architecture transformer \

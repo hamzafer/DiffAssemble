@@ -249,7 +249,7 @@ if __name__ == "__main__":
     ap.add_argument(
         "-dataset",
         default="wikiart",
-        choices=["celeba", "wikiart", "cifar100", "coco", "imagenet", "jpwleg3"],
+        choices=["celeba", "wikiart", "cifar100", "coco", "imagenet", "jpwleg3", "texmet"],
     )
     ap.add_argument("-sampling", default="DDIM", choices=["DDPM", "DDIM"])
     ap.add_argument("-inference_ratio", type=int, default=10)
