@@ -153,3 +153,34 @@ python puzzle_diff/train_script.py \
     -steps 300 \
     --degree 100% \
     --architecture transformer \
+
+# Test all irregular fragment types
+python visuals4x4imagenetirregular.py --fragment_type all --save_images --dataset imagenet
+
+# Test specific fragment types
+python visuals4x4imagenetirregular.py --fragment_type jigsaw --save_images --dataset texmet
+python visuals4x4imagenetirregular.py --fragment_type torn --save_images --dataset texmet
+python visuals4x4imagenetirregular.py --fragment_type geometric --save_images --dataset texmet
+
+# Test only irregular fragments (skip regular)
+python visuals4x4imagenetirregular.py --irregular_only --save_images --dataset texmet
+
+# Test only first 50 images with graph nodes
+python visuals4x4imagenetirregular.py --irregular_only --save_images --test_limit 50 --show_graph_nodes
+
+# Test first 20 images, jigsaw fragments only, with graph visualization
+python visuals4x4imagenetirregular.py --fragment_type jigsaw --save_images --test_limit 20 --show_graph_nodes
+
+# Quick test with first 10 images
+python visuals4x4imagenetirregular.py --irregular_only --save_images --test_limit 10 --num_examples 2
+# Default 10% erosion
+python visuals4x4imagenetirregular.py --irregular_only --save_images --test_limit 20
+
+# More aggressive 15% erosion
+python visuals4x4imagenetirregular.py --irregular_only --save_images --test_limit 20 --erosion_percent 15
+
+# No erosion (clean cut fragments)
+python visuals4x4imagenetirregular.py --irregular_only --save_images --test_limit 20 --erosion_percent 0
+
+# Heavy erosion for very weathered fragments
+python visuals4x4imagenetirregular.py --irregular_only --save_images --test_limit 20 --erosion_percent 20
