@@ -154,6 +154,9 @@ python puzzle_diff/train_script.py \
     --degree 100% \
     --architecture transformer \
 
+python puzzle_diff/train_script.py   -dataset texmet   -puzzle_sizes 3  
+ -batch_size 128   -gpus 4
+
 # Test all irregular fragment types
 python visuals4x4imagenetirregular.py --fragment_type all --save_images --dataset imagenet
 
@@ -184,3 +187,10 @@ python visuals4x4imagenetirregular.py --irregular_only --save_images --test_limi
 
 # Heavy erosion for very weathered fragments
 python visuals4x4imagenetirregular.py --irregular_only --save_images --test_limit 20 --erosion_percent 20
+
+tmux attach -t puzzle
+python puzzle_diff/train_script.py \
+    -dataset imagenet \
+    -puzzle_sizes 3 \
+    -batch_size 8 \
+    -gpus 1 --evaluate True --checkpoint_path "Puzzle-Diff/l4moa60r/checkpoints/last.ckpt" --offline
