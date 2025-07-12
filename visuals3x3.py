@@ -6,6 +6,7 @@ import argparse
 from tqdm import tqdm
 import pandas as pd
 from datetime import datetime
+import time
 
 # CRITICAL: Set up module redirection BEFORE any imports
 sys.path.append('/home/user1/Desktop/HAMZA/THESIS/DiffAssemble')
@@ -27,6 +28,7 @@ from puzzle_diff.model import spatial_diffusion as sd
 from puzzle_diff.dataset import dataset_utils as du
 
 import torch
+import torch.nn as nn
 import matplotlib.pyplot as plt
 from PIL import Image, ImageOps
 import numpy as np
@@ -35,6 +37,10 @@ import torch.nn.functional as F
 import math
 from torch_geometric.data import Batch
 import einops
+
+# Logging constants
+LOG_INTERVAL = 100  # Log every N samples
+SAVE_INTERVAL = 500  # Save intermediate results every N samples
 
 def parse_args():
     parser = argparse.ArgumentParser(description='ImageNet 3x3 Puzzle Analysis')
@@ -49,8 +55,19 @@ def parse_args():
     parser.add_argument('--max_samples', type=int, default=1000, help='Maximum samples to test (if not full test set)')
     parser.add_argument('--output_dir', type=str, default='imagenet_3x3_results', help='Output directory')
     parser.add_argument('--success_threshold', type=float, default=0.8, help='Accuracy threshold for success')
+    parser.add_argument('--gpu_ids', type=str, default='auto', help='GPU IDs to use (e.g., "0,1,2" or "auto" for all available)')
+    parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility')
     
     return parser.parse_args()
+
+class MultiGPUDiffusionWrapper(nn.Module):
+    """Wrapper for multi-GPU diffusion model"""
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+        
+    def forward(self, batch_x_shape, patches, edge_index, batch):
+        return self.model.p_sample_loop(batch_x_shape, patches, edge_index, batch=batch)
 
 def create_image_from_patches(patches, pos, n_patches, rotations=None):
     """Create puzzle image from patches and positions - OPTIMIZED FOR 3x3"""
@@ -103,7 +120,7 @@ def greedy_cost_assignment(pred_pos, real_grid):
     return torch.tensor(pred_ass, device=pred_pos.device)
 
 def evaluate_single_sample(model, sample, real_grid, device, img_id):
-    """Evaluate a single puzzle sample"""
+    """Evaluate a single puzzle sample - optimized for multi-GPU"""
     try:
         # Create batch
         batch = Batch.from_data_list([sample])
@@ -115,12 +132,20 @@ def evaluate_single_sample(model, sample, real_grid, device, img_id):
         
         # Run inference
         with torch.no_grad():
-            imgs, _ = model.p_sample_loop(
-                batch.x.shape,
-                batch.patches,
-                batch.edge_index,
-                batch=batch.batch
-            )
+            if hasattr(model, 'module'):  # Multi-GPU model
+                imgs, _ = model.module.p_sample_loop(
+                    batch.x.shape,
+                    batch.patches,
+                    batch.edge_index,
+                    batch=batch.batch
+                )
+            else:  # Single GPU model
+                imgs, _ = model.p_sample_loop(
+                    batch.x.shape,
+                    batch.patches,
+                    batch.edge_index,
+                    batch=batch.batch
+                )
         
         # Get final prediction
         if len(imgs[-1].shape) == 3:
@@ -170,7 +195,89 @@ def evaluate_single_sample(model, sample, real_grid, device, img_id):
         return result
         
     except Exception as e:
+        print(f"Error evaluating sample {img_id}: {e}")
         return None
+
+def setup_device_and_model(args):
+    """Setup device(s) and load model with multi-GPU support"""
+    if args.gpu_ids == 'auto':
+        if torch.cuda.is_available():
+            gpu_ids = list(range(torch.cuda.device_count()))
+        else:
+            gpu_ids = []
+    else:
+        gpu_ids = [int(x.strip()) for x in args.gpu_ids.split(',') if x.strip().isdigit()]
+    
+    if not gpu_ids:
+        device = torch.device('cpu')
+        print(f"🖥️  Using CPU")
+    else:
+        device = torch.device(f'cuda:{gpu_ids[0]}')
+        print(f"🚀 Using GPU(s): {gpu_ids}")
+        print(f"   Primary device: {device}")
+        for gpu_id in gpu_ids:
+            print(f"   GPU {gpu_id}: {torch.cuda.get_device_name(gpu_id)}")
+    
+    # Load model
+    print("\n🔧 Loading model...")
+    try:
+        model = sd.GNN_Diffusion.load_from_checkpoint(args.checkpoint_path)
+        model.initialize_torchmetrics([args.puzzle_size])
+        model.noise_weight = 0.0
+        model.inference_ratio = 10
+        model.save_eval_images = False
+        
+        model = model.to(device)
+        
+        # Multi-GPU setup
+        if len(gpu_ids) > 1:
+            model = nn.DataParallel(model, device_ids=gpu_ids)
+            print(f"   ✅ Model loaded with DataParallel on {len(gpu_ids)} GPUs")
+        else:
+            print(f"   ✅ Model loaded on single device: {device}")
+        
+        model.eval()
+        return model, device, gpu_ids
+        
+    except Exception as e:
+        print(f"   ❌ Failed to load model: {e}")
+        raise
+
+def log_progress(sample_idx, total_samples, start_time, results, args):
+    """Enhanced logging with timing and memory info"""
+    if sample_idx % LOG_INTERVAL == 0 and sample_idx > 0:
+        elapsed = time.time() - start_time
+        samples_per_sec = sample_idx / elapsed
+        eta = (total_samples - sample_idx) / samples_per_sec if samples_per_sec > 0 else 0
+        
+        # Calculate current stats
+        total_accuracy = sum(r['piece_accuracy'] for r in results)
+        avg_accuracy = total_accuracy / len(results) if results else 0
+        perfect_count = sum(r['perfect_puzzle'] for r in results)
+        success_count = sum(r['piece_accuracy'] >= args.success_threshold for r in results)
+        
+        print(f"\n📊 Progress Report (Sample {sample_idx}/{total_samples})")
+        print(f"   ⏱️  Elapsed: {elapsed:.1f}s | Speed: {samples_per_sec:.2f} samples/s | ETA: {eta:.1f}s")
+        print(f"   🎯 Avg piece accuracy: {avg_accuracy:.4f}")
+        print(f"   🏆 Perfect puzzles: {perfect_count}/{len(results)} ({perfect_count/len(results)*100:.1f}%)")
+        print(f"   ✅ Success rate (≥{args.success_threshold:.1%}): {success_count}/{len(results)} ({success_count/len(results)*100:.1f}%)")
+        
+        # Memory info for GPU
+        if torch.cuda.is_available():
+            for i in range(torch.cuda.device_count()):
+                allocated = torch.cuda.memory_allocated(i) / 1024**3
+                cached = torch.cuda.memory_reserved(i) / 1024**3
+                print(f"   🔥 GPU {i} Memory: {allocated:.2f}GB allocated, {cached:.2f}GB cached")
+
+def save_intermediate_results(results, output_dir, timestamp):
+    """Save intermediate results during evaluation"""
+    if not results:
+        return
+        
+    intermediate_path = output_dir / f"intermediate_results_{timestamp}.csv"
+    df = pd.DataFrame([{k: v for k, v in r.items() if k not in ['gt_pos', 'pred_pos', 'patches_rgb']} for r in results])
+    df.to_csv(intermediate_path, index=False)
+    print(f"   💾 Intermediate results saved: {intermediate_path}")
 
 def save_example_images(successes, failures, output_dir, puzzle_size):
     """Save example success and failure images"""
@@ -230,32 +337,25 @@ def save_example_images(successes, failures, output_dir, puzzle_size):
 def main():
     args = parse_args()
     
+    # Set seeds for reproducibility
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
+    
     # Setup
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     output_dir = Path(args.output_dir)
     output_dir.mkdir(exist_ok=True)
     
     print(f"🎯 IMAGENET {args.puzzle_size}x{args.puzzle_size} PUZZLE ANALYSIS")
-    print(f"Device: {device}")
     print(f"Checkpoint: {args.checkpoint_path}")
     print(f"Save images: {args.save_images}")
     print(f"Full test set: {args.full_test_set}")
     print(f"Output directory: {output_dir}")
+    print(f"Random seed: {args.seed}")
     
-    # Load model
-    print("\n🔧 Loading model...")
-    try:
-        model = sd.GNN_Diffusion.load_from_checkpoint(args.checkpoint_path)
-        model.initialize_torchmetrics([args.puzzle_size])
-        model.noise_weight = 0.0
-        model.inference_ratio = 10
-        model.save_eval_images = False  # We handle image saving ourselves
-        model = model.to(device)
-        model.eval()
-        print("   ✅ Model loaded successfully (position-only)")
-    except Exception as e:
-        print(f"   ❌ Failed to load model: {e}")
-        return
+    # Setup device and model
+    model, device, gpu_ids = setup_device_and_model(args)
     
     # Load dataset
     print("\n📂 Loading dataset...")
@@ -285,7 +385,7 @@ def main():
         print(f"\n🔍 Evaluating random subset: {len(sample_indices)} samples")
     
     # Evaluation
-    print("\n🚀 Starting evaluation...")
+    print(f"\n🚀 Starting evaluation... (Logging every {LOG_INTERVAL} samples)")
     results = []
     successes = []
     failures = []
@@ -293,10 +393,12 @@ def main():
     total_accuracy = 0
     total_perfect = 0
     total_samples = 0
+    start_time = time.time()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    progress_bar = tqdm(sample_indices, desc="Evaluating", unit="sample")
+    progress_bar = tqdm(sample_indices, desc="🔄 Evaluating", unit="sample")
     
-    for img_id in progress_bar:
+    for sample_idx, img_id in enumerate(progress_bar, 1):
         sample = test_dt[img_id]
         result = evaluate_single_sample(model, sample, real_grid, device, img_id)
         
@@ -324,11 +426,18 @@ def main():
             # Update progress bar
             current_avg_acc = total_accuracy / total_samples if total_samples > 0 else 0
             progress_bar.set_postfix({
-                'avg_acc': f'{current_avg_acc:.3f}',
+                'piece_acc': f'{current_avg_acc:.3f}',
                 'perfect': f'{total_perfect}/{total_samples}',
-                'successes': len([r for r in results if r['success']]),
-                'failures': len([r for r in results if not r['success']])
+                'succ': len([r for r in results if r['success']]),
+                'fail': len([r for r in results if not r['success']])
             })
+            
+            # Enhanced logging
+            log_progress(sample_idx, len(sample_indices), start_time, results, args)
+            
+            # Save intermediate results
+            if sample_idx % SAVE_INTERVAL == 0:
+                save_intermediate_results(results, output_dir, timestamp)
     
     progress_bar.close()
     
@@ -338,17 +447,18 @@ def main():
         perfect_rate = total_perfect / total_samples
         success_count = len([r for r in results if r['success']])
         success_rate = success_count / total_samples
+        total_time = time.time() - start_time
         
-        print(f"\n📊 EVALUATION RESULTS:")
+        print(f"\n🏁 FINAL EVALUATION RESULTS:")
         print(f"="*60)
         print(f"   📈 Total samples evaluated: {total_samples}")
-        print(f"   🎯 Average piece accuracy: {avg_accuracy:.4f}")
-        print(f"   🏆 Perfect puzzles: {total_perfect}/{total_samples} ({perfect_rate:.4f})")
+        print(f"   🎯 Average PIECE accuracy: {avg_accuracy:.4f}")
+        print(f"   🏆 Perfect PUZZLE rate: {total_perfect}/{total_samples} ({perfect_rate:.4f})")
         print(f"   ✅ Success rate (≥{args.success_threshold:.1%}): {success_count}/{total_samples} ({success_rate:.4f})")
-        print(f"   ❌ Failure rate (<{args.success_threshold:.1%}): {total_samples-success_count}/{total_samples} ({1-success_rate:.4f})")
+        print(f"   ⏱️  Total evaluation time: {total_time:.1f}s ({total_samples/total_time:.2f} samples/s)")
+        print(f"   🚀 GPU(s) used: {gpu_ids if gpu_ids else 'CPU'}")
         
         # Save detailed results to CSV
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         csv_path = output_dir / f"evaluation_results_{timestamp}.csv"
         df = pd.DataFrame(results)
         df.to_csv(csv_path, index=False)
@@ -365,12 +475,14 @@ def main():
             f.write(f"Puzzle size: {args.puzzle_size}x{args.puzzle_size}\n")
             f.write(f"Success threshold: {args.success_threshold:.1%}\n")
             f.write(f"Full test set: {args.full_test_set}\n")
+            f.write(f"GPU IDs: {gpu_ids}\n")
+            f.write(f"Random seed: {args.seed}\n")
             f.write(f"\nResults:\n")
             f.write(f"Total samples evaluated: {total_samples}\n")
             f.write(f"Average piece accuracy: {avg_accuracy:.4f}\n")
-            f.write(f"Perfect puzzles: {total_perfect}/{total_samples} ({perfect_rate:.4f})\n")
+            f.write(f"Perfect puzzle rate: {total_perfect}/{total_samples} ({perfect_rate:.4f})\n")
             f.write(f"Success rate: {success_count}/{total_samples} ({success_rate:.4f})\n")
-            f.write(f"Failure rate: {total_samples-success_count}/{total_samples} ({1-success_rate:.4f})\n")
+            f.write(f"Total time: {total_time:.1f}s ({total_samples/total_time:.2f} samples/s)\n")
         
         print(f"📄 Summary saved: {summary_path}")
         
