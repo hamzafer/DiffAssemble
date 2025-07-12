@@ -29,6 +29,19 @@ python puzzle_diff/train_script.py \
   --backbone resnet18equiv \
   --architecture transformer
 
+
+python puzzle_diff/train_script.py \
+  -dataset texmet \
+  -puzzle_sizes 6 \
+  -batch_size 16 \
+  -gpus 2 \
+  -steps 300 \
+  -sampling DDIM \
+  -inference_ratio 10 \
+  --degree 100% \
+  --backbone resnet18equiv \
+  --architecture transformer
+
 # Train to reproduce imagenet
 python puzzle_diff/train_script.py \
   -dataset imagenet \
