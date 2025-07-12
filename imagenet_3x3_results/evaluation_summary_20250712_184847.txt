@@ -1,0 +1,17 @@
+ImageNet 3x3 Puzzle Evaluation Summary
+============================================================
+Timestamp: 20250712_184847
+Checkpoint: /cluster/home/muhammtm/DiffAssemble/Puzzle-Diff/l4moa60r/checkpoints/last.ckpt
+Dataset: imagenet
+Puzzle size: 3x3
+Success threshold: 80.0%
+Full test set: False
+GPU IDs: [0, 1, 2, 3]
+Random seed: 42
+
+Results:
+Total samples evaluated: 1000
+Average piece accuracy: 0.8424
+Perfect puzzle rate: 572/1000 (0.5720)
+Success rate: 572/1000 (0.5720)
+Total time: 129.5s (7.72 samples/s)

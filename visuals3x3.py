@@ -39,11 +39,13 @@ from torch_geometric.data import Batch
 import einops
 
 # Logging constants
-LOG_INTERVAL = 100  # Log every N samples
-SAVE_INTERVAL = 500  # Save intermediate results every N samples
+LOG_INTERVAL = 10  # Log every N samples
+SAVE_INTERVAL = 5000  # Save intermediate results every N samples
+
+# DiffAssemble/Puzzle-Diff/k3v0vsmj
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='ImageNet 3x3 Puzzle Analysis')
+    parser = argparse.ArgumentParser(description='Dataset Puzzle Analysis')
     parser.add_argument('--checkpoint_path', type=str, 
                        default="/cluster/home/muhammtm/DiffAssemble/Puzzle-Diff/l4moa60r/checkpoints/last.ckpt",
                        help='Path to model checkpoint')
@@ -52,6 +54,7 @@ def parse_args():
     parser.add_argument('--save_images', action='store_true', help='Save example images')
     parser.add_argument('--num_examples', type=int, default=5, help='Number of success/failure examples to save (only if --save_images)')
     parser.add_argument('--full_test_set', action='store_true', help='Evaluate on full test set instead of random sampling')
+    parser.add_argument('--test_split_ratio', type=float, default=0.5, help='Ratio of test set to use for evaluation (rest kept for final eval)')
     parser.add_argument('--max_samples', type=int, default=1000, help='Maximum samples to test (if not full test set)')
     parser.add_argument('--output_dir', type=str, default='imagenet_3x3_results', help='Output directory')
     parser.add_argument('--success_threshold', type=float, default=0.8, help='Accuracy threshold for success')
@@ -243,6 +246,49 @@ def setup_device_and_model(args):
         print(f"   ❌ Failed to load model: {e}")
         raise
 
+def setup_multi_gpu_models(checkpoint_path, puzzle_size, gpu_ids):
+    """Setup models on multiple GPUs"""
+    models = []
+    devices = []
+    
+    for gpu_id in gpu_ids:
+        device = f'cuda:{gpu_id}'
+        model = sd.GNN_Diffusion.load_from_checkpoint(checkpoint_path)
+        model.initialize_torchmetrics([puzzle_size])
+        model.noise_weight = 0.0
+        model.inference_ratio = 10
+        model.save_eval_images = False
+        model = model.to(device)
+        model.eval()
+        models.append(model)
+        devices.append(device)
+    
+    return models, devices
+
+def evaluate_batch_multi_gpu(models, devices, samples, real_grids, start_idx):
+    """Evaluate batch across multiple GPUs"""
+    results = []
+    samples_per_gpu = len(samples) // len(models)
+    
+    for gpu_idx in range(len(models)):
+        start = gpu_idx * samples_per_gpu
+        end = start + samples_per_gpu if gpu_idx < len(models) - 1 else len(samples)
+        gpu_samples = samples[start:end]
+        
+        if not gpu_samples:
+            continue
+            
+        model = models[gpu_idx]
+        device = devices[gpu_idx]
+        real_grid = real_grids[gpu_idx]
+        
+        for i, sample in enumerate(gpu_samples):
+            result = evaluate_single_sample(model, sample, real_grid, device, start_idx + start + i)
+            if result:
+                results.append(result)
+    
+    return results
+
 def log_progress(sample_idx, total_samples, start_time, results, args):
     """Enhanced logging with timing and memory info"""
     if sample_idx % LOG_INTERVAL == 0 and sample_idx > 0:
@@ -334,6 +380,60 @@ def save_example_images(successes, failures, output_dir, puzzle_size):
         plt.close()
         print(f"   📊 Examples saved: {save_path}")
 
+def save_single_example_immediately(result, output_dir, puzzle_size, status, count, timestamp):
+    """Save a single example immediately when found"""
+    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+    
+    # Create images
+    scrambled_pos = torch.rand(puzzle_size*puzzle_size, 2) * 2 - 1
+    scrambled_img = create_image_from_patches(result['patches_rgb'], scrambled_pos, (puzzle_size, puzzle_size), None)
+    pred_img = create_image_from_patches(result['patches_rgb'], result['pred_pos'], (puzzle_size, puzzle_size), None)
+    gt_img = create_image_from_patches(result['patches_rgb'], result['gt_pos'], (puzzle_size, puzzle_size), None)
+    
+    # Scrambled
+    axes[0].imshow(scrambled_img)
+    axes[0].set_title('Scrambled Input', fontsize=14, fontweight='bold')
+    axes[0].axis('off')
+    
+    # Prediction
+    axes[1].imshow(pred_img)
+    color = 'green' if status == "SUCCESS" else 'red'
+    accuracy_pct = result['piece_accuracy'] * 100
+    axes[1].set_title(f'Model Prediction\n{result["pieces_correct"]}/{result["total_pieces"]} pieces ({accuracy_pct:.1f}%)', 
+                     fontsize=14, fontweight='bold', color=color)
+    axes[1].axis('off')
+    
+    # Ground Truth
+    axes[2].imshow(gt_img)
+    axes[2].set_title('Ground Truth', fontsize=14, fontweight='bold')
+    axes[2].axis('off')
+    
+    plt.suptitle(f'{status} Example #{count} - Image {result["img_id"]}', fontsize=16, fontweight='bold')
+    plt.tight_layout()
+    
+    save_path = output_dir / f"{status.lower()}_{count}_{timestamp}.png"
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"   🖼️  {status} example saved: {save_path}")
+
+def split_test_set_for_eval(test_dt, split_ratio=0.5, seed=42):
+    """Split test set into evaluation and holdout sets"""
+    np.random.seed(seed)
+    total_samples = len(test_dt)
+    eval_size = int(total_samples * split_ratio)
+    
+    # Create indices
+    indices = np.random.permutation(total_samples)
+    eval_indices = indices[:eval_size]
+    holdout_indices = indices[eval_size:]
+    
+    print(f"   📊 Test set split:")
+    print(f"      🔍 Evaluation set: {len(eval_indices)} samples ({split_ratio:.1%})")
+    print(f"      🔒 Holdout set: {len(holdout_indices)} samples ({1-split_ratio:.1%})")
+    print(f"      💾 Holdout indices saved for final evaluation")
+    
+    return eval_indices.tolist(), holdout_indices.tolist()
+
 def main():
     args = parse_args()
     
@@ -347,15 +447,25 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(exist_ok=True)
     
-    print(f"🎯 IMAGENET {args.puzzle_size}x{args.puzzle_size} PUZZLE ANALYSIS")
+    print(f"🎯 {args.dataset.upper()} {args.puzzle_size}x{args.puzzle_size} PUZZLE ANALYSIS")
     print(f"Checkpoint: {args.checkpoint_path}")
+    print(f"Dataset: {args.dataset}")
+    print(f"Test split ratio: {args.test_split_ratio:.1%} for evaluation")
     print(f"Save images: {args.save_images}")
     print(f"Full test set: {args.full_test_set}")
     print(f"Output directory: {output_dir}")
     print(f"Random seed: {args.seed}")
     
-    # Setup device and model
-    model, device, gpu_ids = setup_device_and_model(args)
+    # Setup GPUs
+    if args.gpu_ids == 'auto':
+        gpu_ids = list(range(torch.cuda.device_count())) if torch.cuda.is_available() else [0]
+    else:
+        gpu_ids = [int(x.strip()) for x in args.gpu_ids.split(',')]
+    
+    print(f"🚀 Using GPUs: {gpu_ids}")
+    
+    # Setup models on multiple GPUs
+    models, devices = setup_multi_gpu_models(args.checkpoint_path, args.puzzle_size, gpu_ids)
     
     # Load dataset
     print("\n📂 Loading dataset...")
@@ -364,45 +474,71 @@ def main():
             dataset=args.dataset,
             puzzle_sizes=[args.puzzle_size]
         )
-        print(f"   ✅ Dataset loaded: {len(test_dt)} test samples")
+        print(f"   ✅ Dataset loaded: {len(train_dt)} train, {len(test_dt)} test samples")
+        
+        # Split test set into evaluation and holdout
+        eval_indices, holdout_indices = split_test_set_for_eval(test_dt, args.test_split_ratio, args.seed)
+        
+        # Save holdout indices for final evaluation
+        holdout_path = output_dir / f"holdout_indices_seed{args.seed}.txt"
+        with open(holdout_path, 'w') as f:
+            for idx in holdout_indices:
+                f.write(f"{idx}\n")
+        print(f"   💾 Holdout indices saved: {holdout_path}")
+        
     except Exception as e:
         print(f"   ❌ Failed to load dataset: {e}")
         return
     
-    # Create grid
-    y = torch.linspace(-1, 1, args.puzzle_size, device=device)
-    x = torch.linspace(-1, 1, args.puzzle_size, device=device)
-    xy = torch.stack(torch.meshgrid(x, y, indexing="xy"), -1)
-    real_grid = einops.rearrange(xy, "x y c-> (x y) c")
+    # Create grids for each GPU
+    real_grids = []
+    for device in devices:
+        y = torch.linspace(-1, 1, args.puzzle_size, device=device)
+        x = torch.linspace(-1, 1, args.puzzle_size, device=device)
+        xy = torch.stack(torch.meshgrid(x, y, indexing="xy"), -1)
+        real_grid = einops.rearrange(xy, "x y c-> (x y) c")
+        real_grids.append(real_grid)
     
-    # Determine samples to test
+    # Determine samples to evaluate (only from evaluation split)
     if args.full_test_set:
-        sample_indices = list(range(len(test_dt)))
-        print(f"\n🔍 Evaluating full test set: {len(sample_indices)} samples")
+        sample_indices = eval_indices
+        print(f"\n🔍 Evaluating full evaluation set: {len(sample_indices)} samples")
+        print(f"   🔒 Keeping {len(holdout_indices)} samples for final evaluation")
     else:
-        max_samples = min(args.max_samples, len(test_dt))
-        sample_indices = np.random.choice(len(test_dt), max_samples, replace=False).tolist()
-        print(f"\n🔍 Evaluating random subset: {len(sample_indices)} samples")
+        max_samples = min(args.max_samples, len(eval_indices))
+        sample_indices = np.random.choice(eval_indices, max_samples, replace=False).tolist()
+        print(f"\n🔍 Evaluating random subset from evaluation split: {len(sample_indices)} samples")
+        print(f"   🔒 Keeping {len(holdout_indices)} samples for final evaluation")
     
-    # Evaluation
-    print(f"\n🚀 Starting evaluation... (Logging every {LOG_INTERVAL} samples)")
+    # Evaluation with batching
+    print(f"\n🚀 Starting multi-GPU evaluation on evaluation split...")
+    batch_size = len(gpu_ids) * 4  # 4 samples per GPU
     results = []
     successes = []
     failures = []
-    
-    total_accuracy = 0
-    total_perfect = 0
-    total_samples = 0
     start_time = time.time()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    progress_bar = tqdm(sample_indices, desc="🔄 Evaluating", unit="sample")
+    # Progress tracking variables
+    total_accuracy = 0
+    total_perfect = 0
+    total_samples = 0
+    success_count_saved = 0
+    failure_count_saved = 0
     
-    for sample_idx, img_id in enumerate(progress_bar, 1):
-        sample = test_dt[img_id]
-        result = evaluate_single_sample(model, sample, real_grid, device, img_id)
+    progress_bar = tqdm(range(0, len(sample_indices), batch_size), 
+                       desc="🔄 Evaluating", 
+                       unit="batch",
+                       postfix={'piece_acc': '0.000', 'succ': 0, 'fail': 0})
+    
+    for i in progress_bar:
+        batch_indices = sample_indices[i:i+batch_size]
+        batch_samples = [test_dt[idx] for idx in batch_indices]
         
-        if result is not None:
+        batch_results = evaluate_batch_multi_gpu(models, devices, batch_samples, real_grids, i)
+        
+        for result in batch_results:
+            # Store detailed result
             results.append({
                 'img_id': result['img_id'],
                 'total_pieces': result['total_pieces'],
@@ -412,81 +548,104 @@ def main():
                 'success': result['piece_accuracy'] >= args.success_threshold
             })
             
+            # Update running totals
             total_accuracy += result['piece_accuracy']
             total_perfect += int(result['perfect_puzzle'])
             total_samples += 1
             
-            # Collect examples for visualization
+            # SAVE EXAMPLES IMMEDIATELY WHEN FOUND
             if args.save_images:
-                if result['piece_accuracy'] >= args.success_threshold and len(successes) < args.num_examples:
+                if result['piece_accuracy'] >= args.success_threshold and success_count_saved < args.num_examples:
                     successes.append(result)
-                elif result['piece_accuracy'] < args.success_threshold and len(failures) < args.num_examples:
+                    success_count_saved += 1
+                    print(f"\n🎉 SUCCESS #{success_count_saved} found! Accuracy: {result['piece_accuracy']:.3f}")
+                    save_single_example_immediately(result, output_dir, args.puzzle_size, "SUCCESS", success_count_saved, timestamp)
+                    
+                elif result['piece_accuracy'] < args.success_threshold and failure_count_saved < args.num_examples:
                     failures.append(result)
+                    failure_count_saved += 1
+                    print(f"\n❌ FAILURE #{failure_count_saved} found! Accuracy: {result['piece_accuracy']:.3f}")
+                    save_single_example_immediately(result, output_dir, args.puzzle_size, "FAILURE", failure_count_saved, timestamp)
+        
+        # Update progress bar with live info
+        current_piece_acc = total_accuracy / total_samples if total_samples > 0 else 0
+        success_count = sum(1 for r in results if r['success'])
+        
+        progress_bar.set_postfix({
+            'piece_acc': f'{current_piece_acc:.3f}',
+            'succ': success_count_saved,
+            'fail': failure_count_saved,
+            'total': total_samples
+        })
+        
+        # Enhanced logging every LOG_INTERVAL samples
+        if total_samples % LOG_INTERVAL == 0 and total_samples > 0:
+            elapsed = time.time() - start_time
+            samples_per_sec = total_samples / elapsed
+            eta = (len(sample_indices) - total_samples) / samples_per_sec if samples_per_sec > 0 else 0
             
-            # Update progress bar
-            current_avg_acc = total_accuracy / total_samples if total_samples > 0 else 0
-            progress_bar.set_postfix({
-                'piece_acc': f'{current_avg_acc:.3f}',
-                'perfect': f'{total_perfect}/{total_samples}',
-                'succ': len([r for r in results if r['success']]),
-                'fail': len([r for r in results if not r['success']])
-            })
-            
-            # Enhanced logging
-            log_progress(sample_idx, len(sample_indices), start_time, results, args)
-            
-            # Save intermediate results
-            if sample_idx % SAVE_INTERVAL == 0:
-                save_intermediate_results(results, output_dir, timestamp)
+            print(f"\n📊 Progress Report (Sample {total_samples}/{len(sample_indices)})")
+            print(f"   ⏱️  Elapsed: {elapsed:.1f}s | Speed: {samples_per_sec:.2f} samples/s | ETA: {eta:.1f}s")
+            print(f"   🎯 Live PIECE accuracy: {current_piece_acc:.4f}")
+            print(f"   🏆 Live PUZZLE accuracy: {total_perfect}/{total_samples} ({total_perfect/total_samples:.4f})")
+            print(f"   🖼️  Examples saved: {success_count_saved} successes, {failure_count_saved} failures")
+            print(f"   🔒 Holdout samples untouched: {len(holdout_indices)}")
+        
+        # Save intermediate results
+        if total_samples % SAVE_INTERVAL == 0 and total_samples > 0:
+            save_intermediate_results(results, output_dir, timestamp)
     
     progress_bar.close()
     
     # Calculate final statistics
-    if total_samples > 0:
-        avg_accuracy = total_accuracy / total_samples
-        perfect_rate = total_perfect / total_samples
-        success_count = len([r for r in results if r['success']])
+    if results:
+        total_samples = len(results)
+        avg_accuracy = sum(r['piece_accuracy'] for r in results) / total_samples
+        perfect_count = sum(r['perfect_puzzle'] for r in results)
+        perfect_rate = perfect_count / total_samples
+        success_count = sum(r['success'] for r in results)
         success_rate = success_count / total_samples
         total_time = time.time() - start_time
         
-        print(f"\n🏁 FINAL EVALUATION RESULTS:")
+        print(f"\n🏁 FINAL EVALUATION RESULTS (EVALUATION SPLIT):")
         print(f"="*60)
-        print(f"   📈 Total samples evaluated: {total_samples}")
+        print(f"   📈 Total samples evaluated: {total_samples} ({args.test_split_ratio:.1%} of test set)")
         print(f"   🎯 Average PIECE accuracy: {avg_accuracy:.4f}")
-        print(f"   🏆 Perfect PUZZLE rate: {total_perfect}/{total_samples} ({perfect_rate:.4f})")
+        print(f"   🏆 Perfect PUZZLE rate: {perfect_count}/{total_samples} ({perfect_rate:.4f})")
         print(f"   ✅ Success rate (≥{args.success_threshold:.1%}): {success_count}/{total_samples} ({success_rate:.4f})")
         print(f"   ⏱️  Total evaluation time: {total_time:.1f}s ({total_samples/total_time:.2f} samples/s)")
-        print(f"   🚀 GPU(s) used: {gpu_ids if gpu_ids else 'CPU'}")
+        print(f"   🚀 GPU(s) used: {gpu_ids}")
+        print(f"   🔒 Holdout samples for final eval: {len(holdout_indices)}")
         
-        # Save detailed results to CSV
+        # Save detailed results
         csv_path = output_dir / f"evaluation_results_{timestamp}.csv"
         df = pd.DataFrame(results)
         df.to_csv(csv_path, index=False)
         print(f"\n💾 Detailed results saved: {csv_path}")
         
-        # Save summary statistics
+        # Save summary with split info
         summary_path = output_dir / f"evaluation_summary_{timestamp}.txt"
         with open(summary_path, 'w') as f:
-            f.write(f"ImageNet {args.puzzle_size}x{args.puzzle_size} Puzzle Evaluation Summary\n")
+            f.write(f"{args.dataset.upper()} {args.puzzle_size}x{args.puzzle_size} Puzzle Evaluation Summary\n")
             f.write(f"="*60 + "\n")
             f.write(f"Timestamp: {timestamp}\n")
             f.write(f"Checkpoint: {args.checkpoint_path}\n")
             f.write(f"Dataset: {args.dataset}\n")
-            f.write(f"Puzzle size: {args.puzzle_size}x{args.puzzle_size}\n")
-            f.write(f"Success threshold: {args.success_threshold:.1%}\n")
-            f.write(f"Full test set: {args.full_test_set}\n")
-            f.write(f"GPU IDs: {gpu_ids}\n")
+            f.write(f"Test split ratio: {args.test_split_ratio:.1%} for evaluation\n")
+            f.write(f"Evaluation samples: {total_samples}\n")
+            f.write(f"Holdout samples: {len(holdout_indices)}\n")
             f.write(f"Random seed: {args.seed}\n")
-            f.write(f"\nResults:\n")
-            f.write(f"Total samples evaluated: {total_samples}\n")
+            f.write(f"\nResults (Evaluation Split Only):\n")
             f.write(f"Average piece accuracy: {avg_accuracy:.4f}\n")
-            f.write(f"Perfect puzzle rate: {total_perfect}/{total_samples} ({perfect_rate:.4f})\n")
+            f.write(f"Perfect puzzle rate: {perfect_count}/{total_samples} ({perfect_rate:.4f})\n")
             f.write(f"Success rate: {success_count}/{total_samples} ({success_rate:.4f})\n")
             f.write(f"Total time: {total_time:.1f}s ({total_samples/total_time:.2f} samples/s)\n")
+            f.write(f"\nNOTE: {len(holdout_indices)} samples kept for final evaluation\n")
         
         print(f"📄 Summary saved: {summary_path}")
+        print(f"📄 Holdout indices saved: {holdout_path}")
         
-        # Save example images if requested
+        # Save example images
         if args.save_images:
             save_example_images(successes, failures, output_dir, args.puzzle_size)
         
