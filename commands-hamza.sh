@@ -207,3 +207,14 @@ python puzzle_diff/train_script.py \
     -puzzle_sizes 3 \
     -batch_size 8 \
     -gpus 1 --evaluate True --checkpoint_path "Puzzle-Diff/l4moa60r/checkpoints/last.ckpt" --offline
+
+#fine tune on idun turab
+python puzzle_diff/train_script.py \
+    -dataset texmet \
+    -puzzle_sizes 3 \
+    -batch_size 128 \
+    -gpus 4 \
+    -max_epochs 100 \
+    --checkpoint_path "/cluster/home/muhammtm/DiffAssemble/Puzzle-Diff/l4moa60r/checkpoints/last.ckpt" \
+
+python visuals3x3.py --full_test_set --dataset texmet --test_split_ratio 0.5 --checkpoint_path /cluster/home/muhammtm/DiffAssemble/Puzzle-Diff/g4a4f15z/checkpoints/last.ckpt

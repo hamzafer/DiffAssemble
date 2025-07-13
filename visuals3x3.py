@@ -42,12 +42,13 @@ import einops
 LOG_INTERVAL = 10  # Log every N samples
 SAVE_INTERVAL = 5000  # Save intermediate results every N samples
 
-# DiffAssemble/Puzzle-Diff/k3v0vsmj
+# DiffAssemble/Puzzle-Diff/burv19lf --texmet
+# /cluster/home/muhammtm/DiffAssemble/Puzzle-Diff/zmozj5qw/checkpoints/last.ckpt
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Dataset Puzzle Analysis')
     parser.add_argument('--checkpoint_path', type=str, 
-                       default="/cluster/home/muhammtm/DiffAssemble/Puzzle-Diff/l4moa60r/checkpoints/last.ckpt",
+                       default="/cluster/home/muhammtm/DiffAssemble/Puzzle-Diff/zmozj5qw/checkpoints/last.ckpt",
                        help='Path to model checkpoint')
     parser.add_argument('--dataset', type=str, default='imagenet', help='Dataset to use')
     parser.add_argument('--puzzle_size', type=int, default=3, help='Puzzle size (default: 3x3)')

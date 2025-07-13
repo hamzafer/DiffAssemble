@@ -1,0 +1,17 @@
+TEXMET 3x3 Puzzle Evaluation Summary
+============================================================
+Timestamp: 20250713_032453
+Checkpoint: /cluster/home/muhammtm/DiffAssemble/Puzzle-Diff/g4a4f15z/checkpoints/last.ckpt
+Dataset: texmet
+Test split ratio: 50.0% for evaluation
+Evaluation samples: 1864
+Holdout samples: 1865
+Random seed: 42
+
+Results (Evaluation Split Only):
+Average piece accuracy: 0.9094
+Perfect puzzle rate: 1415/1864 (0.7591)
+Success rate: 1415/1864 (0.7591)
+Total time: 374.2s (4.98 samples/s)
+
+NOTE: 1865 samples kept for final evaluation

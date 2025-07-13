@@ -1,0 +1,11 @@
+img_id,total_pieces,pieces_correct,piece_accuracy,perfect_puzzle,success
+0,9,9,1.0,True,True
+1,9,9,1.0,True,True
+2,9,9,1.0,True,True
+3,9,9,1.0,True,True
+4,9,9,1.0,True,True
+5,9,9,1.0,True,True
+6,9,9,1.0,True,True
+7,9,9,1.0,True,True
+8,9,9,1.0,True,True
+9,9,9,1.0,True,True
