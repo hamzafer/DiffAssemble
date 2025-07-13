@@ -1,6 +1,0 @@
-img_id,total_pieces,pieces_correct,piece_accuracy,perfect_puzzle,success
-0,9,2,0.2222222238779068,False,False
-1,9,2,0.2222222238779068,False,False
-2,9,1,0.1111111119389534,False,False
-3,9,0,0.0,False,False
-4,9,1,0.1111111119389534,False,False
