@@ -1,21 +1,28 @@
 import os
-from PIL import Image
+from PIL import Image, ImageFile
 import torch
 from torch.utils.data import Dataset
 
+# Allow loading of large images
+ImageFile.LOAD_TRUNCATED_IMAGES = True
+Image.MAX_IMAGE_PIXELS = None  # Remove PIL's image size limit
 
 class TEXMET_DT(Dataset):
-    def __init__(self, train=True, transform=None):
+    def __init__(self, train=True, transform=None, max_size=512):
         self.train = train
         self.transform = transform
-        self.data_dir = "/cluster/home/muhammtm/data/TEXMET/images"
+        self.data_dir = "/cluster/home/akmarala/data/TEXMET"
         
         # Set PIL limits to handle large images safely
         Image.MAX_IMAGE_PIXELS = None  # Remove decompression bomb limit
         
-        # Load the appropriate split file
-        split_file = "TEXMET_train.txt" if train else "TEXMET_test.txt"
-        split_path = os.path.join("/cluster/home/muhammtm/DiffAssemble/datasets/data_splits", split_file)
+        # Load the appropriate split file from the TEXMET data directory
+        if train:
+            split_file = "train_files.txt"
+        else:
+            split_file = "test_files.txt"  # or "val_files.txt" if you want validation split
+        
+        split_path = os.path.join(self.data_dir, split_file)
         
         with open(split_path, 'r') as f:
             self.image_files = [line.strip() for line in f.readlines()]
@@ -27,6 +34,8 @@ class TEXMET_DT(Dataset):
     
     def __getitem__(self, idx):
         img_filename = self.image_files[idx]
+        # The filenames in the split files already include the full relative path
+        # e.g., "test/images/filename.jpg" or "train/images/filename.jpg"
         img_path = os.path.join(self.data_dir, img_filename)
         
         # Load image with size limit
