@@ -130,6 +130,13 @@ python puzzle_diff/train_script.py \
     --missing 30 \
     --save_eval_images True
 
+# 4090 local machine imagenet 3x3
+python puzzle_diff/train_script.py \
+    -dataset imagenet \
+    -puzzle_sizes 3 \
+    -batch_size 16 \
+    -gpus 1
+
 # 4090 local machine imagenet 4x4
 python puzzle_diff/train_script.py \
     -dataset imagenet \

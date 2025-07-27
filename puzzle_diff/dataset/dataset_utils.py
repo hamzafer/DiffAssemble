@@ -106,7 +106,7 @@ def get_dataset(
         augment=False,
         degree=-1 if inf_fully else degree,  # fully connected graph in inference
         unique_graph=rng,
-        random=False,  # creating random puzzles
+        random=True,  # creating random puzzles
     )
 
     return (puzzleDt_train, puzzleDt_test, real_puzzle_sizes)
