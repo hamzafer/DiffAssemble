@@ -43,7 +43,8 @@ LOG_INTERVAL = 10  # Log every N samples
 SAVE_INTERVAL = 5000  # Save intermediate results every N samples
 
 # DiffAssemble/Puzzle-Diff/burv19lf --texmet
-# /cluster/home/muhammtm/DiffAssemble/Puzzle-Diff/zmozj5qw/checkpoints/last.ckpt
+# /cluster/home/muhammtm/DiffAssemble/Puzzle-Diff/zmozj5qw/checkpoints/last.ckpt -- fine tune2
+# imagenet: l4moa60r
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Dataset Puzzle Analysis')
@@ -55,7 +56,7 @@ def parse_args():
     parser.add_argument('--save_images', action='store_true', help='Save example images')
     parser.add_argument('--num_examples', type=int, default=5, help='Number of success/failure examples to save (only if --save_images)')
     parser.add_argument('--full_test_set', action='store_true', help='Evaluate on full test set instead of random sampling')
-    parser.add_argument('--test_split_ratio', type=float, default=0.5, help='Ratio of test set to use for evaluation (rest kept for final eval)')
+    parser.add_argument('--test_split_ratio', type=float, default=1.0, help='Ratio of test set to use for evaluation (rest kept for final eval)')
     parser.add_argument('--max_samples', type=int, default=1000, help='Maximum samples to test (if not full test set)')
     parser.add_argument('--output_dir', type=str, default='imagenet_3x3_results', help='Output directory')
     parser.add_argument('--success_threshold', type=float, default=0.8, help='Accuracy threshold for success')
@@ -381,59 +382,101 @@ def save_example_images(successes, failures, output_dir, puzzle_size):
         plt.close()
         print(f"   📊 Examples saved: {save_path}")
 
-def save_single_example_immediately(result, output_dir, puzzle_size, status, count, timestamp):
-    """Save a single example immediately when found"""
-    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+def save_example_images_texmet_grid(successes, failures, output_dir, puzzle_size):
+    """Save 3 success and 3 failure examples in separate figures for texmet dataset"""
+    if len(successes) < 3 or len(failures) < 3:
+        print(f"⚠️  Need at least 3 successes and 3 failures. Got {len(successes)} successes, {len(failures)} failures")
+        return
     
-    # Create images
-    scrambled_pos = torch.rand(puzzle_size*puzzle_size, 2) * 2 - 1
-    scrambled_img = create_image_from_patches(result['patches_rgb'], scrambled_pos, (puzzle_size, puzzle_size), None)
-    pred_img = create_image_from_patches(result['patches_rgb'], result['pred_pos'], (puzzle_size, puzzle_size), None)
-    gt_img = create_image_from_patches(result['patches_rgb'], result['gt_pos'], (puzzle_size, puzzle_size), None)
+    print("💾 Saving texmet dataset examples in 2 separate figures...")
     
-    # Scrambled
-    axes[0].imshow(scrambled_img)
-    axes[0].set_title('Scrambled Input', fontsize=14, fontweight='bold')
-    axes[0].axis('off')
+    # Take first 3 of each
+    success_examples = successes[:3]
+    failure_examples = failures[:3]
     
-    # Prediction
-    axes[1].imshow(pred_img)
-    color = 'green' if status == "SUCCESS" else 'red'
-    accuracy_pct = result['piece_accuracy'] * 100
-    axes[1].set_title(f'Model Prediction\n{result["pieces_correct"]}/{result["total_pieces"]} pieces ({accuracy_pct:.1f}%)', 
-                     fontsize=14, fontweight='bold', color=color)
-    axes[1].axis('off')
+    # ===== SUCCESS FIGURE =====
+    fig_success, axes_success = plt.subplots(2, 3, figsize=(18, 12))
     
-    # Ground Truth
-    axes[2].imshow(gt_img)
-    axes[2].set_title('Ground Truth', fontsize=14, fontweight='bold')
-    axes[2].axis('off')
+    for i, result in enumerate(success_examples):
+        # Create images
+        scrambled_pos = torch.rand(puzzle_size*puzzle_size, 2) * 2 - 1
+        scrambled_img = create_image_from_patches(result['patches_rgb'], scrambled_pos, (puzzle_size, puzzle_size), None)
+        pred_img = create_image_from_patches(result['patches_rgb'], result['pred_pos'], (puzzle_size, puzzle_size), None)
+        
+        # Row 0: Scrambled input
+        axes_success[0, i].imshow(scrambled_img)
+        axes_success[0, i].set_title(f'SUCCESS {i+1}\nScrambled Input', 
+                                   fontsize=18, fontweight='bold', color='green', pad=20)
+        axes_success[0, i].axis('off')
+        
+        # Row 1: Model prediction
+        axes_success[1, i].imshow(pred_img)
+        accuracy_pct = result['piece_accuracy'] * 100
+        axes_success[1, i].set_title(f'Model Output\n{result["pieces_correct"]}/{result["total_pieces"]} pieces ({accuracy_pct:.1f}%)', 
+                                   fontsize=18, fontweight='bold', color='green', pad=20)
+        axes_success[1, i].axis('off')
     
-    plt.suptitle(f'{status} Example #{count} - Image {result["img_id"]}', fontsize=16, fontweight='bold')
+    plt.suptitle('Benchmarking TEXMET on Baseline Models\nSUCCESS EXAMPLES', 
+                fontsize=24, fontweight='bold', color='green', y=0.95)
+    
     plt.tight_layout()
+    plt.subplots_adjust(top=0.85, bottom=0.05, left=0.05, right=0.95, hspace=0.3, wspace=0.1)
     
-    save_path = output_dir / f"{status.lower()}_{count}_{timestamp}.png"
-    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    success_path = output_dir / f"texmet_{puzzle_size}x{puzzle_size}_SUCCESS_examples.png"
+    plt.savefig(success_path, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"   🖼️  {status} example saved: {save_path}")
+    print(f"   📊 SUCCESS examples saved: {success_path}")
+    
+    # ===== FAILURE FIGURE =====
+    fig_failure, axes_failure = plt.subplots(2, 3, figsize=(18, 12))
+    
+    for i, result in enumerate(failure_examples):
+        # Create images
+        scrambled_pos = torch.rand(puzzle_size*puzzle_size, 2) * 2 - 1
+        scrambled_img = create_image_from_patches(result['patches_rgb'], scrambled_pos, (puzzle_size, puzzle_size), None)
+        pred_img = create_image_from_patches(result['patches_rgb'], result['pred_pos'], (puzzle_size, puzzle_size), None)
+        
+        # Row 0: Scrambled input
+        axes_failure[0, i].imshow(scrambled_img)
+        axes_failure[0, i].set_title(f'FAILURE {i+1}\nScrambled Input', 
+                                   fontsize=18, fontweight='bold', color='red', pad=20)
+        axes_failure[0, i].axis('off')
+        
+        # Row 1: Model prediction
+        axes_failure[1, i].imshow(pred_img)
+        accuracy_pct = result['piece_accuracy'] * 100
+        axes_failure[1, i].set_title(f'Model Output\n{result["pieces_correct"]}/{result["total_pieces"]} pieces ({accuracy_pct:.1f}%)', 
+                                   fontsize=18, fontweight='bold', color='red', pad=20)
+        axes_failure[1, i].axis('off')
+    
+    plt.suptitle('Benchmarking TEXMET on Baseline Models\nFAILURE EXAMPLES', 
+                fontsize=24, fontweight='bold', color='red', y=0.95)
+    
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.85, bottom=0.05, left=0.05, right=0.95, hspace=0.3, wspace=0.1)
+    
+    failure_path = output_dir / f"texmet_{puzzle_size}x{puzzle_size}_FAILURE_examples.png"
+    plt.savefig(failure_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"   📊 FAILURE examples saved: {failure_path}")
+    
+    print(f"   ✅ Two separate TEXMET figures created with larger text and images")
 
-def split_test_set_for_eval(test_dt, split_ratio=0.5, seed=42):
+def split_test_set_for_eval(test_dt, test_split_ratio, seed):
     """Split test set into evaluation and holdout sets"""
-    np.random.seed(seed)
-    total_samples = len(test_dt)
-    eval_size = int(total_samples * split_ratio)
+    total_test_samples = len(test_dt)
+    eval_size = int(total_test_samples * test_split_ratio)
     
     # Create indices
-    indices = np.random.permutation(total_samples)
-    eval_indices = indices[:eval_size]
-    holdout_indices = indices[eval_size:]
+    all_indices = list(range(total_test_samples))
+    np.random.seed(seed)
+    np.random.shuffle(all_indices)
     
-    print(f"   📊 Test set split:")
-    print(f"      🔍 Evaluation set: {len(eval_indices)} samples ({split_ratio:.1%})")
-    print(f"      🔒 Holdout set: {len(holdout_indices)} samples ({1-split_ratio:.1%})")
-    print(f"      💾 Holdout indices saved for final evaluation")
+    eval_indices = all_indices[:eval_size]
+    holdout_indices = all_indices[eval_size:]
     
-    return eval_indices.tolist(), holdout_indices.tolist()
+    print(f"   📊 Test split: {len(eval_indices)} evaluation, {len(holdout_indices)} holdout")
+    return eval_indices, holdout_indices
 
 def main():
     args = parse_args()
@@ -449,13 +492,12 @@ def main():
     output_dir.mkdir(exist_ok=True)
     
     print(f"🎯 {args.dataset.upper()} {args.puzzle_size}x{args.puzzle_size} PUZZLE ANALYSIS")
-    print(f"Checkpoint: {args.checkpoint_path}")
-    print(f"Dataset: {args.dataset}")
-    print(f"Test split ratio: {args.test_split_ratio:.1%} for evaluation")
-    print(f"Save images: {args.save_images}")
-    print(f"Full test set: {args.full_test_set}")
-    print(f"Output directory: {output_dir}")
-    print(f"Random seed: {args.seed}")
+    
+    # For texmet dataset, we want to collect enough examples
+    if args.dataset.lower() == 'texmet':
+        print("🎨 TEXMET dataset detected - will save 3x3 success/failure grid")
+        # Ensure we collect at least 3 of each type
+        args.num_examples = max(args.num_examples, 3)
     
     # Setup GPUs
     if args.gpu_ids == 'auto':
@@ -504,16 +546,14 @@ def main():
     if args.full_test_set:
         sample_indices = eval_indices
         print(f"\n🔍 Evaluating full evaluation set: {len(sample_indices)} samples")
-        print(f"   🔒 Keeping {len(holdout_indices)} samples for final evaluation")
     else:
         max_samples = min(args.max_samples, len(eval_indices))
         sample_indices = np.random.choice(eval_indices, max_samples, replace=False).tolist()
         print(f"\n🔍 Evaluating random subset from evaluation split: {len(sample_indices)} samples")
-        print(f"   🔒 Keeping {len(holdout_indices)} samples for final evaluation")
     
     # Evaluation with batching
     print(f"\n🚀 Starting multi-GPU evaluation on evaluation split...")
-    batch_size = len(gpu_ids) * 4  # 4 samples per GPU
+    batch_size = len(gpu_ids) * 4
     results = []
     successes = []
     failures = []
@@ -526,6 +566,9 @@ def main():
     total_samples = 0
     success_count_saved = 0
     failure_count_saved = 0
+    
+    # For texmet, we need at least 3 of each
+    min_examples_needed = 3 if args.dataset.lower() == 'texmet' else args.num_examples
     
     progress_bar = tqdm(range(0, len(sample_indices), batch_size), 
                        desc="🔄 Evaluating", 
@@ -556,28 +599,30 @@ def main():
             
             # SAVE EXAMPLES IMMEDIATELY WHEN FOUND
             if args.save_images:
-                if result['piece_accuracy'] >= args.success_threshold and success_count_saved < args.num_examples:
+                if result['piece_accuracy'] >= args.success_threshold and success_count_saved < min_examples_needed:
                     successes.append(result)
                     success_count_saved += 1
                     print(f"\n🎉 SUCCESS #{success_count_saved} found! Accuracy: {result['piece_accuracy']:.3f}")
-                    save_single_example_immediately(result, output_dir, args.puzzle_size, "SUCCESS", success_count_saved, timestamp)
                     
-                elif result['piece_accuracy'] < args.success_threshold and failure_count_saved < args.num_examples:
+                elif result['piece_accuracy'] < args.success_threshold and failure_count_saved < min_examples_needed:
                     failures.append(result)
                     failure_count_saved += 1
                     print(f"\n❌ FAILURE #{failure_count_saved} found! Accuracy: {result['piece_accuracy']:.3f}")
-                    save_single_example_immediately(result, output_dir, args.puzzle_size, "FAILURE", failure_count_saved, timestamp)
         
-        # Update progress bar with live info
+        # Update progress bar
         current_piece_acc = total_accuracy / total_samples if total_samples > 0 else 0
-        success_count = sum(1 for r in results if r['success'])
-        
         progress_bar.set_postfix({
             'piece_acc': f'{current_piece_acc:.3f}',
             'succ': success_count_saved,
             'fail': failure_count_saved,
             'total': total_samples
         })
+        
+        # Stop early if we have enough examples for texmet visualization
+        if (args.dataset.lower() == 'texmet' and args.save_images and 
+            success_count_saved >= 3 and failure_count_saved >= 3):
+            print(f"\n✅ Collected enough examples for TEXMET visualization (3 success, 3 failure)")
+            break
         
         # Enhanced logging every LOG_INTERVAL samples
         if total_samples % LOG_INTERVAL == 0 and total_samples > 0:
@@ -608,47 +653,26 @@ def main():
         success_rate = success_count / total_samples
         total_time = time.time() - start_time
         
-        print(f"\n🏁 FINAL EVALUATION RESULTS (EVALUATION SPLIT):")
+        print(f"\n🏁 FINAL EVALUATION RESULTS:")
         print(f"="*60)
-        print(f"   📈 Total samples evaluated: {total_samples} ({args.test_split_ratio:.1%} of test set)")
+        print(f"   📈 Total samples evaluated: {total_samples}")
         print(f"   🎯 Average PIECE accuracy: {avg_accuracy:.4f}")
         print(f"   🏆 Perfect PUZZLE rate: {perfect_count}/{total_samples} ({perfect_rate:.4f})")
         print(f"   ✅ Success rate (≥{args.success_threshold:.1%}): {success_count}/{total_samples} ({success_rate:.4f})")
-        print(f"   ⏱️  Total evaluation time: {total_time:.1f}s ({total_samples/total_time:.2f} samples/s)")
-        print(f"   🚀 GPU(s) used: {gpu_ids}")
-        print(f"   🔒 Holdout samples for final eval: {len(holdout_indices)}")
+        print(f"   ⏱️  Total evaluation time: {total_time:.1f}s")
         
-        # Save detailed results
+        # Save results
         csv_path = output_dir / f"evaluation_results_{timestamp}.csv"
         df = pd.DataFrame(results)
         df.to_csv(csv_path, index=False)
         print(f"\n💾 Detailed results saved: {csv_path}")
         
-        # Save summary with split info
-        summary_path = output_dir / f"evaluation_summary_{timestamp}.txt"
-        with open(summary_path, 'w') as f:
-            f.write(f"{args.dataset.upper()} {args.puzzle_size}x{args.puzzle_size} Puzzle Evaluation Summary\n")
-            f.write(f"="*60 + "\n")
-            f.write(f"Timestamp: {timestamp}\n")
-            f.write(f"Checkpoint: {args.checkpoint_path}\n")
-            f.write(f"Dataset: {args.dataset}\n")
-            f.write(f"Test split ratio: {args.test_split_ratio:.1%} for evaluation\n")
-            f.write(f"Evaluation samples: {total_samples}\n")
-            f.write(f"Holdout samples: {len(holdout_indices)}\n")
-            f.write(f"Random seed: {args.seed}\n")
-            f.write(f"\nResults (Evaluation Split Only):\n")
-            f.write(f"Average piece accuracy: {avg_accuracy:.4f}\n")
-            f.write(f"Perfect puzzle rate: {perfect_count}/{total_samples} ({perfect_rate:.4f})\n")
-            f.write(f"Success rate: {success_count}/{total_samples} ({success_rate:.4f})\n")
-            f.write(f"Total time: {total_time:.1f}s ({total_samples/total_time:.2f} samples/s)\n")
-            f.write(f"\nNOTE: {len(holdout_indices)} samples kept for final evaluation\n")
-        
-        print(f"📄 Summary saved: {summary_path}")
-        print(f"📄 Holdout indices saved: {holdout_path}")
-        
-        # Save example images
+        # Save example images - use special texmet grid for texmet dataset
         if args.save_images:
-            save_example_images(successes, failures, output_dir, args.puzzle_size)
+            if args.dataset.lower() == 'texmet':
+                save_example_images_texmet_grid(successes, failures, output_dir, args.puzzle_size)
+            else:
+                save_example_images(successes, failures, output_dir, args.puzzle_size)
         
     else:
         print("❌ No samples could be evaluated successfully")

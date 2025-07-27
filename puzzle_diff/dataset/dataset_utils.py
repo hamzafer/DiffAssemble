@@ -5,6 +5,7 @@ from torchvision.datasets import CIFAR100, ImageNet
 from .breakingbad_dt import GeometryPartDataset
 from .celeba_dt import CelebA_HQ
 from .jpwleg3_dt import JPwLEG3_DT  # Add this import
+from .custom_dt import OSEBERG_DT  # Add this import
 from .nips_dt import Nips_dt
 from .objects_dataset import Objects_Dataset
 from .puzzle_dataset import (
@@ -24,7 +25,7 @@ from .wiki_dt import Wiki_dt
 from .wikiart_dt import Wikiart_DT
 from .texmet_dt import TEXMET_DT  # Add this import
 
-ALLOWED_DT = ["celeba", "cifar100", "wikiart", "imagenet", "jpwleg3", "texmet"]  # Add texmet here
+ALLOWED_DT = ["celeba", "cifar100", "wikiart", "imagenet", "jpwleg3", "texmet", "oseberg"]  # Add oseberg here
 ALLOWED_TEXT = ["nips", "sind", "roc", "wiki"]
 
 
@@ -84,6 +85,9 @@ def get_dataset(
     elif dataset == "texmet":  # Add this case
         train_dt = TEXMET_DT(train=True)
         test_dt = TEXMET_DT(train=False)
+    elif dataset == "oseberg":  # Add this case
+        train_dt = OSEBERG_DT(train=True)
+        test_dt = OSEBERG_DT(train=False)
     else:
         raise Exception("Not supported")
 
@@ -156,6 +160,9 @@ def get_dataset_missing_pieces(
     elif dataset == "texmet":  # Add this case
         train_dt = TEXMET_DT(train=True)
         test_dt = TEXMET_DT(train=False)
+    elif dataset == "oseberg":  # Add this case
+        train_dt = OSEBERG_DT(train=True)
+        test_dt = OSEBERG_DT(train=False)
     else:
         raise Exception("Not supported")
 
@@ -236,6 +243,9 @@ def get_dataset_ROT(
     elif dataset == "texmet":  # Add this case
         train_dt = TEXMET_DT(train=True)
         test_dt = TEXMET_DT(train=False)
+    elif dataset == "oseberg":  # Add this case
+        train_dt = OSEBERG_DT(train=True)
+        test_dt = OSEBERG_DT(train=False)
     else:
         raise Exception("Dataset not supported")
     
@@ -333,6 +343,9 @@ def get_dataset_padding(
     elif dataset == "texmet":  # Add this case
         train_dt = TEXMET_DT(train=True)
         test_dt = TEXMET_DT(train=False)
+    elif dataset == "oseberg":  # Add this case
+        train_dt = OSEBERG_DT(train=True)
+        test_dt = OSEBERG_DT(train=False)
 
     # Create puzzle datasets using the loaded datasets
     puzzleDt_train = Puzzle_Dataset_Pad(
