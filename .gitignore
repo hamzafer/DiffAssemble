@@ -15,7 +15,7 @@ singularity/*.o*
 exploration_analysis
 launch_experiment.sh
 singularity/*
-
+/imagenet_3x3_results
 
 singularity/build/singularity/*
 singularity/*.o*

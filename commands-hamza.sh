@@ -29,6 +29,19 @@ python puzzle_diff/train_script.py \
   --backbone resnet18equiv \
   --architecture transformer
 
+
+python puzzle_diff/train_script.py \
+  -dataset texmet \
+  -puzzle_sizes 6 \
+  -batch_size 16 \
+  -gpus 2 \
+  -steps 300 \
+  -sampling DDIM \
+  -inference_ratio 10 \
+  --degree 100% \
+  --backbone resnet18equiv \
+  --architecture transformer
+
 # Train to reproduce imagenet
 python puzzle_diff/train_script.py \
   -dataset imagenet \
@@ -161,6 +174,9 @@ python puzzle_diff/train_script.py \
     --degree 100% \
     --architecture transformer \
 
+python puzzle_diff/train_script.py   -dataset texmet   -puzzle_sizes 3  
+ -batch_size 128   -gpus 4
+
 # Test all irregular fragment types
 python visuals4x4imagenetirregular.py --fragment_type all --save_images --dataset imagenet
 
@@ -191,3 +207,21 @@ python visuals4x4imagenetirregular.py --irregular_only --save_images --test_limi
 
 # Heavy erosion for very weathered fragments
 python visuals4x4imagenetirregular.py --irregular_only --save_images --test_limit 20 --erosion_percent 20
+
+tmux attach -t puzzle
+python puzzle_diff/train_script.py \
+    -dataset imagenet \
+    -puzzle_sizes 3 \
+    -batch_size 8 \
+    -gpus 1 --evaluate True --checkpoint_path "Puzzle-Diff/l4moa60r/checkpoints/last.ckpt" --offline
+
+#fine tune on idun turab
+python puzzle_diff/train_script.py \
+    -dataset texmet \
+    -puzzle_sizes 3 \
+    -batch_size 128 \
+    -gpus 4 \
+    -max_epochs 100 \
+    --checkpoint_path "/cluster/home/muhammtm/DiffAssemble/Puzzle-Diff/l4moa60r/checkpoints/last.ckpt" \
+
+python visuals3x3.py --full_test_set --dataset texmet --test_split_ratio 0.5 --checkpoint_path /cluster/home/muhammtm/DiffAssemble/Puzzle-Diff/g4a4f15z/checkpoints/last.ckpt
