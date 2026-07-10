@@ -110,7 +110,7 @@ def get_dataset(
         augment=False,
         degree=-1 if inf_fully else degree,  # fully connected graph in inference
         unique_graph=rng,
-        random=True,  # creating random puzzles
+        random=False,  # creating random puzzles (reverted 2026-07-02: post-thesis commit 933ff2a broke training ground truth)
     )
 
     return (puzzleDt_train, puzzleDt_test, real_puzzle_sizes)
